@@ -19,6 +19,7 @@ import com.margelo.nitro.dev.litert.litertlm.HybridLiteRTLMSpec
 import com.margelo.nitro.dev.litert.litertlm.LLMConfig
 import com.margelo.nitro.dev.litert.litertlm.Message
 import com.margelo.nitro.dev.litert.litertlm.Role
+import com.margelo.nitro.core.Promise
 
 // Alias to avoid confusion with our generated Message type
 typealias LiteRTMessage = com.google.ai.edge.litertlm.Message
@@ -33,6 +34,10 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
 
     companion object {
         private const val TAG = "HybridLiteRTLM"
+    }
+
+    init {
+        LiteRTLMRegistry.register(this)
     }
 
     // LiteRT-LM Engine and Conversation
@@ -60,116 +65,124 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
     private var maxTokens: Int = 1024
 
     override val memorySize: Long
-        get() = 10L * 1024L * 1024L // ~10MB estimate
+        get() = 1024L * 1024L * 1024L // ~1GB (models are large)
 
     // -------------------------------------------------------------------------
     // loadModel - Initialize LiteRT-LM Engine and Conversation
     // -------------------------------------------------------------------------
-    override fun loadModel(modelPath: String, config: LLMConfig?) {
-        Log.i(TAG, "loadModel: $modelPath")
+    override fun loadModel(modelPath: String, config: LLMConfig?): Promise<Unit> {
+        return Promise.parallel {
+            Log.i(TAG, "loadModel: $modelPath")
 
-        // Clean up existing resources
-        close()
+            // Clean up existing resources
+            close()
 
-        // Apply configuration
-        config?.let { cfg ->
-            cfg.backend?.let { backend = it }
-            cfg.temperature?.let { temperature = it }
-            cfg.topK?.let { topK = it.toInt() }
-            cfg.topP?.let { topP = it }
-            cfg.maxTokens?.let { maxTokens = it.toInt() }
-        }
-
-        try {
-            // Map our Backend enum to LiteRT-LM Backend enum
-            val lmBackend = when (backend) {
-                Backend.GPU -> com.google.ai.edge.litertlm.Backend.GPU
-                Backend.NPU -> {
-                    Log.i(TAG, "NPU backend requested - requires hardware support")
-                    com.google.ai.edge.litertlm.Backend.NPU
-                }
-                else -> com.google.ai.edge.litertlm.Backend.CPU
+            // Apply configuration
+            config?.let { cfg ->
+                cfg.backend?.let { backend = it }
+                cfg.temperature?.let { temperature = it }
+                cfg.topK?.let { topK = it.toInt() }
+                cfg.topP?.let { topP = it }
+                cfg.maxTokens?.let { maxTokens = it.toInt() }
             }
-            
-            // Vision backend: hardcoded to GPU (required by Gemma 3n)
-            val lmVisionBackend = com.google.ai.edge.litertlm.Backend.GPU
+
+            try {
+                // Map our Backend enum to LiteRT-LM Backend enum
+                val lmBackend = when (backend) {
+                    Backend.GPU -> com.google.ai.edge.litertlm.Backend.GPU
+                    Backend.NPU -> {
+                        Log.i(TAG, "NPU backend requested - requires hardware support")
+                        com.google.ai.edge.litertlm.Backend.NPU
+                    }
+                    else -> com.google.ai.edge.litertlm.Backend.CPU
+                }
                 
-            // Audio backend: hardcoded to CPU (optimal for audio processing)
-            val lmAudioBackend = com.google.ai.edge.litertlm.Backend.CPU
+                // Vision backend: hardcoded to GPU (required by Gemma 3n)
+                val lmVisionBackend = com.google.ai.edge.litertlm.Backend.GPU
+                    
+                // Audio backend: hardcoded to CPU (optimal for audio processing)
+                val lmAudioBackend = com.google.ai.edge.litertlm.Backend.CPU
 
-            Log.i(TAG, "Backend config: main=$lmBackend, vision=$lmVisionBackend (hardcoded), audio=$lmAudioBackend (hardcoded)")
+                Log.i(TAG, "Backend config: main=$lmBackend, vision=$lmVisionBackend (hardcoded), audio=$lmAudioBackend (hardcoded)")
 
-            // Get cache directory from application context
-            // LiteRT-LM needs this to store temporary compiled model files
-            val cacheDirectory = LiteRTLMInitProvider.applicationContext?.cacheDir?.absolutePath
-            Log.i(TAG, "Using cache directory: $cacheDirectory")
+                // Get cache directory from application context
+                val cacheDirectory = LiteRTLMInitProvider.applicationContext?.cacheDir?.absolutePath
+                Log.i(TAG, "Using cache directory: $cacheDirectory")
 
-            // Create Engine configuration
-            val engineConfig = EngineConfig(
-                modelPath = modelPath,
-                backend = lmBackend,
-                visionBackend = lmVisionBackend,
-                audioBackend = lmAudioBackend,
-                maxNumTokens = maxTokens,
-                cacheDir = cacheDirectory
-            )
+                // Create Engine configuration
+                val engineConfig = EngineConfig(
+                    modelPath = modelPath,
+                    backend = lmBackend,
+                    visionBackend = lmVisionBackend,
+                    audioBackend = lmAudioBackend,
+                    maxNumTokens = maxTokens,
+                    cacheDir = cacheDirectory
+                )
 
-            // Create Engine (heavyweight - loads model)
-            engine = Engine(engineConfig).also { it.initialize() }
-            Log.i(TAG, "Engine created and initialized successfully")
+                // Initialize Engine
+                engine = Engine(engineConfig).also { it.initialize() }
+                Log.i(TAG, "Engine created and initialized successfully")
 
-            // Create Conversation (lightweight - holds KV cache)
-            createNewConversation()
-            Log.i(TAG, "Conversation created successfully")
+                // Create Conversation
+                createNewConversation()
+                Log.i(TAG, "Conversation created successfully")
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model: ${e.message}", e)
-            throw RuntimeException("Failed to load model: ${e.message}", e)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load model: ${e.message}", e)
+                throw RuntimeException("Failed to load model: ${e.message}", e)
+            }
         }
     }
 
     // -------------------------------------------------------------------------
-    // sendMessage - Blocking text inference
+    // sendMessage - Helper for one-shot generation (internally uses Async)
     // -------------------------------------------------------------------------
-    override fun sendMessage(message: String): String {
-        ensureLoaded()
+    override fun sendMessage(message: String): Promise<String> {
+        // Implement Promise-based sendMessage using suspend coroutine logic wrapped in Promise
+        // Since Promise.parallel expects a blocking block returning T, 
+        // and sendMessageAsync is callback-based, we need to bridge them.
+        // HOWEVER, we can just use the synchronous `sendMessage` API of the SDK 
+        // inside the `Promise.parallel` block, which moves it off the main thread!
+        return Promise.parallel {
+            ensureLoaded()
 
-        // Add user message to history
-        history.add(Message(Role.USER, message))
-
-        // Pre-process message (chat template)
-        Log.i(TAG, "sendMessage: $message")
-        
-        // Blocking inference
-        // LiteRT-LM expects a Message object, not String
-        val userMsg = LiteRTMessage.of(message)
-        val responseMsg = conversation!!.sendMessage(userMsg)
-        
-        // Extract text from response Message
-        val response = responseMsg.contents
-            .filterIsInstance<com.google.ai.edge.litertlm.Content.Text>()
-            .joinToString("") { it.text } 
-        
-        // Add model response to history
-        history.add(Message(Role.MODEL, response))
-        
-        // Update stats (mock/approximate for now as SDK doesn't return full stats for sync call)
-        lastStats = GenerationStats(
-            promptTokens = message.length / 4.0,
-            completionTokens = response.length / 4.0,
-            totalTokens = (message.length + response.length) / 4.0,
-            timeToFirstToken = 0.0,
-            totalTime = 0.0,
-            tokensPerSecond = 0.0
-        )
-        
-        return response
+            // Add user message to history
+            history.add(Message(Role.USER, message))
+            Log.i(TAG, "sendMessage (Promise): $message")
+            
+            // Blocking inference (safe here because we are in Promise.parallel worker thread)
+            val userMsg = LiteRTMessage.of(message)
+            val responseMsg = conversation!!.sendMessage(userMsg)
+            
+            // Extract text
+            val response = responseMsg.contents
+                .filterIsInstance<com.google.ai.edge.litertlm.Content.Text>()
+                .joinToString("") { it.text } 
+            
+            // Add model response to history
+            history.add(Message(Role.MODEL, response))
+            
+            // Update stats
+            lastStats = GenerationStats(
+                promptTokens = message.length / 4.0,
+                completionTokens = response.length / 4.0,
+                totalTokens = (message.length + response.length) / 4.0,
+                timeToFirstToken = 0.0,
+                totalTime = 0.0,
+                tokensPerSecond = 0.0
+            )
+            
+            response // Return the string
+        }
     }
 
     // -------------------------------------------------------------------------
     // sendMessageAsync - Streaming inference
     // -------------------------------------------------------------------------
     override fun sendMessageAsync(message: String, onToken: (String, Boolean) -> Unit) {
+        // This is already async (void return), so we execute immediately on the calling thread
+        // (which is the Nitro specialized thread, not Main).
+        // The SDK's sendMessageAsync is non-blocking anyway.
         ensureLoaded()
 
         // Add user message to history
@@ -206,12 +219,8 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
         }
 
         try {
-            // Construct Message object
             val userMsg = LiteRTMessage.of(message)
-            
-            // LiteRT-LM async call - SDK handles threading
             conversation!!.sendMessageAsync(userMsg, listener)
-            
         } catch (e: Exception) {
             Log.e(TAG, "Failed into initiate async generation", e)
             onToken("Error: ${e.message}", true)
@@ -221,14 +230,18 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
     // -------------------------------------------------------------------------
     // Multimodal methods
     // -------------------------------------------------------------------------
-    override fun sendMessageWithImage(message: String, imagePath: String): String {
-        // TODO: Implement image loading from path
-        throw RuntimeException("Multimodal (Image) not yet implemented in this wrapper")
+    override fun sendMessageWithImage(message: String, imagePath: String): Promise<String> {
+        return Promise.parallel {
+             // TODO: Implement image loading from path
+            throw RuntimeException("Multimodal (Image) not yet implemented in this wrapper")
+        }
     }
 
-    override fun sendMessageWithAudio(message: String, audioPath: String): String {
-        // TODO: Implement audio loading from path
-        throw RuntimeException("Multimodal (Audio) not yet implemented in this wrapper")
+    override fun sendMessageWithAudio(message: String, audioPath: String): Promise<String> {
+        return Promise.parallel {
+            // TODO: Implement audio loading from path
+            throw RuntimeException("Multimodal (Audio) not yet implemented in this wrapper")
+        }
     }
 
     // -------------------------------------------------------------------------

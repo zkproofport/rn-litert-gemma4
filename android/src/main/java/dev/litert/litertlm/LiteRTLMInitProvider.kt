@@ -17,6 +17,20 @@ class LiteRTLMInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         applicationContext = context?.applicationContext
         Log.i(TAG, "LiteRTLMInitProvider initialized with context: $applicationContext")
+        
+        applicationContext?.registerComponentCallbacks(object : android.content.ComponentCallbacks2 {
+            override fun onTrimMemory(level: Int) {
+                if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                    com.margelo.nitro.dev.litert.litertlm.LiteRTLMRegistry.onTrimMemory(level)
+                }
+            }
+
+            override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {}
+            override fun onLowMemory() {
+                com.margelo.nitro.dev.litert.litertlm.LiteRTLMRegistry.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+            }
+        })
+        
         return true
     }
 

@@ -118,18 +118,17 @@ export interface LiteRTLM extends HybridObject<{
 }> {
   /**
    * Load a .litertlm model file.
-   * @param modelPath Absolute path to the .litertlm file.
    * @param config Optional configuration for backend and sampling.
    * @throws Error if the model cannot be loaded.
    */
-  loadModel(modelPath: string, config?: LLMConfig): void;
+  loadModel(modelPath: string, config?: LLMConfig): Promise<void>;
 
   /**
    * Send a text message and get the complete response (blocking).
    * @param message User message text.
    * @returns The model's response text.
    */
-  sendMessage(message: string): string;
+  sendMessage(message: string): Promise<string>;
 
   /**
    * Send a text message with an image (multimodal).
@@ -137,7 +136,7 @@ export interface LiteRTLM extends HybridObject<{
    * @param imagePath Absolute path to an image file.
    * @returns The model's response text.
    */
-  sendMessageWithImage(message: string, imagePath: string): string;
+  sendMessageWithImage(message: string, imagePath: string): Promise<string>;
 
   /**
    * Send a text message with audio (multimodal).
@@ -145,7 +144,7 @@ export interface LiteRTLM extends HybridObject<{
    * @param audioPath Absolute path to an audio file (WAV).
    * @returns The model's response text.
    */
-  sendMessageWithAudio(message: string, audioPath: string): string;
+  sendMessageWithAudio(message: string, audioPath: string): Promise<string>;
 
   /**
    * Send a message with streaming response.
