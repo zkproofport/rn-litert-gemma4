@@ -15,7 +15,7 @@ High-performance LLM inference for React Native powered by [LiteRT-LM](https://g
 
 ## Status
 
-> ⚠️ **Early Preview**: This library is under active development. Android is functional with enough RAM, iOS implementation pending LiteRT-LM iOS release. Please report any issues on the [GitHub repository](https://github.com/litert-community/react-native-litert-lm).
+> ⚠️ **Early Preview**: This library is under active development. Android is functional with enough RAM, iOS implementation pending LiteRT-LM iOS release. Please report any issues on the [GitHub issues](https://github.com/hung-yueh/react-native-litert-lm/issues).
 
 ## Installation
 
