@@ -283,13 +283,11 @@ std::string HybridLiteRTLM::sendMessageWithImage(
   return response->content;
   
 #else
-  // Stub: just process text with image path noted
-  // Verify file exists at least
-  std::ifstream f(imagePath.c_str());
-  if (!f.good()) {
-     // Don't crash, just log/stub
-  }
-  return sendMessage(message + " [Image: " + imagePath + "]");
+  // iOS: LiteRT-LM SDK not yet available, throw clear error
+  throw std::runtime_error(
+      "sendMessageWithImage is not supported on iOS. "
+      "LiteRT-LM iOS SDK is not yet available. "
+      "Please use text-only sendMessage() for now.");
 #endif
 }
 
@@ -349,8 +347,11 @@ std::string HybridLiteRTLM::sendMessageWithAudio(
   return response->content;
   
 #else
-  // Stub: just process text with audio path noted
-  return sendMessage(message + " [Audio: " + audioPath + "]");
+  // iOS: LiteRT-LM SDK not yet available, throw clear error
+  throw std::runtime_error(
+      "sendMessageWithAudio is not supported on iOS. "
+      "LiteRT-LM iOS SDK is not yet available. "
+      "Please use text-only sendMessage() for now.");
 #endif
 }
 
