@@ -519,6 +519,85 @@ GenerationStats HybridLiteRTLM::getStats() {
 }
 
 //------------------------------------------------------------------------------
+// getMemoryUsage - Return real memory usage from OS
+//------------------------------------------------------------------------------
+MemoryUsage HybridLiteRTLM::getMemoryUsage() {
+  double nativeHeapBytes = 0;
+  double residentBytes = 0;
+  double availableMemoryBytes = 0;
+  bool isLowMemory = false;
+
+#ifdef __APPLE__
+  // Get process memory info via Mach APIs
+  struct mach_task_basic_info taskInfo;
+  mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+  if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                (task_info_t)&taskInfo, &infoCount) == KERN_SUCCESS) {
+    residentBytes = static_cast<double>(taskInfo.resident_size);
+  }
+
+  // Get system-wide memory pressure
+  vm_statistics64_data_t vmStats;
+  mach_msg_type_number_t vmCount = HOST_VM_INFO64_COUNT;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                        (host_info64_t)&vmStats, &vmCount) == KERN_SUCCESS) {
+    vm_size_t pageSize;
+    host_page_size(mach_host_self(), &pageSize);
+    availableMemoryBytes = static_cast<double>(vmStats.free_count) * pageSize;
+    // Consider low memory if free pages < 10% of total active+inactive+free
+    uint64_t totalPages = vmStats.active_count + vmStats.inactive_count + vmStats.free_count;
+    isLowMemory = (totalPages > 0) &&
+                  (static_cast<double>(vmStats.free_count) / totalPages < 0.1);
+  }
+
+  // malloc_size is per-allocation; use resident_size as native heap proxy
+  nativeHeapBytes = residentBytes;
+#endif
+
+#ifdef __ANDROID__
+  // Parse /proc/self/status for VmRSS (resident set size)
+  std::ifstream statusFile("/proc/self/status");
+  if (statusFile.is_open()) {
+    std::string line;
+    while (std::getline(statusFile, line)) {
+      if (line.rfind("VmRSS:", 0) == 0) {
+        // Format: "VmRSS:    123456 kB"
+        std::istringstream iss(line.substr(6));
+        double kbValue = 0;
+        iss >> kbValue;
+        residentBytes = kbValue * 1024.0;
+        break;
+      }
+    }
+  }
+
+  // Use mallinfo for native heap
+  struct mallinfo mi = mallinfo();
+  nativeHeapBytes = static_cast<double>(mi.uordblks); // total allocated space
+
+  // Parse /proc/meminfo for available memory
+  std::ifstream memFile("/proc/meminfo");
+  if (memFile.is_open()) {
+    std::string line;
+    while (std::getline(memFile, line)) {
+      if (line.rfind("MemAvailable:", 0) == 0) {
+        std::istringstream iss(line.substr(13));
+        double kbValue = 0;
+        iss >> kbValue;
+        availableMemoryBytes = kbValue * 1024.0;
+        break;
+      }
+    }
+  }
+
+  // Consider low if available < 256MB
+  isLowMemory = availableMemoryBytes > 0 && availableMemoryBytes < 256.0 * 1024 * 1024;
+#endif
+
+  return MemoryUsage{nativeHeapBytes, residentBytes, availableMemoryBytes, isLowMemory};
+}
+
+//------------------------------------------------------------------------------
 // close - Release all native resources
 //------------------------------------------------------------------------------
 void HybridLiteRTLM::close() {

@@ -1,14 +1,49 @@
 import { NitroModules } from "react-native-nitro-modules";
 import { LiteRTLM, LLMConfig } from "./specs/LiteRTLM.nitro";
+import { createMemoryTracker, MemoryTracker } from "./memoryTracker";
 
 /**
  * Creates a new LiteRT-LM inference engine instance.
+ *
+ * Optionally creates a native-backed memory tracker using
+ * `NitroModules.createNativeArrayBuffer()` (v0.34+) for efficient
+ * zero-copy memory usage tracking.
+ *
+ * @param options.enableMemoryTracking Enable automatic memory tracking (default: false)
+ * @param options.maxMemorySnapshots Maximum number of memory snapshots to store (default: 256)
  */
-export function createLLM(): LiteRTLM {
+export function createLLM(options?: {
+  enableMemoryTracking?: boolean;
+  maxMemorySnapshots?: number;
+}): LiteRTLM & { memoryTracker?: MemoryTracker } {
   const native = NitroModules.createHybridObject<LiteRTLM>("LiteRTLM");
+
+  const enableTracking = options?.enableMemoryTracking ?? false;
+  const tracker = enableTracking
+    ? createMemoryTracker(options?.maxMemorySnapshots ?? 256)
+    : undefined;
+
+  /**
+   * Record a real memory snapshot using OS-level APIs via getMemoryUsage().
+   */
+  const recordMemorySnapshot = () => {
+    if (!tracker) return;
+    try {
+      const usage = native.getMemoryUsage();
+      tracker.record({
+        timestamp: Date.now(),
+        nativeHeapBytes: usage.nativeHeapBytes,
+        residentBytes: usage.residentBytes,
+        availableMemoryBytes: usage.availableMemoryBytes,
+      });
+    } catch {
+      // Ignore errors during memory tracking - it's non-critical
+    }
+  };
 
   return {
     ...native,
+    memoryTracker: tracker,
     loadModel: async (pathOrUrl: string, config?: LLMConfig) => {
       let modelPath = pathOrUrl;
 
@@ -31,17 +66,53 @@ export function createLLM(): LiteRTLM {
         console.log(`Model downloaded to: ${modelPath}`);
       }
 
-      return native.loadModel(modelPath, config);
+      const result = await native.loadModel(modelPath, config);
+
+      // Record initial memory snapshot after model load
+      if (tracker) {
+        tracker.reset();
+        recordMemorySnapshot();
+      }
+
+      return result;
     },
-    // Bind valid methods to native instance
-    sendMessage: native.sendMessage.bind(native),
-    sendMessageAsync: native.sendMessageAsync.bind(native),
-    sendMessageWithImage: native.sendMessageWithImage.bind(native),
-    sendMessageWithAudio: native.sendMessageWithAudio.bind(native),
+    sendMessage: async (...args: Parameters<typeof native.sendMessage>) => {
+      const result = await native.sendMessage(...args);
+      recordMemorySnapshot();
+      return result;
+    },
+    sendMessageAsync: (...args: Parameters<typeof native.sendMessageAsync>) => {
+      const [message, onToken] = args;
+      native.sendMessageAsync(message, (token, done) => {
+        onToken(token, done);
+        if (done) {
+          recordMemorySnapshot();
+        }
+      });
+    },
+    sendMessageWithImage: async (
+      ...args: Parameters<typeof native.sendMessageWithImage>
+    ) => {
+      const result = await native.sendMessageWithImage(...args);
+      recordMemorySnapshot();
+      return result;
+    },
+    sendMessageWithAudio: async (
+      ...args: Parameters<typeof native.sendMessageWithAudio>
+    ) => {
+      const result = await native.sendMessageWithAudio(...args);
+      recordMemorySnapshot();
+      return result;
+    },
     getHistory: native.getHistory.bind(native),
-    resetConversation: native.resetConversation.bind(native),
+    resetConversation: () => {
+      native.resetConversation();
+      // KV cache is cleared on reset, record the drop
+      recordMemorySnapshot();
+    },
     isReady: native.isReady.bind(native),
     getStats: native.getStats.bind(native),
+    getMemoryUsage: native.getMemoryUsage.bind(native),
     close: native.close.bind(native),
     downloadModel: native.downloadModel.bind(native),
     deleteModel: native.deleteModel.bind(native),

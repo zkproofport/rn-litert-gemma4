@@ -12,6 +12,8 @@ High-performance LLM inference for React Native powered by [LiteRT-LM](https://g
 - 📱 **Cross-Platform** - Android API 26+
 - 🖼️ **Multimodal** - Image and audio input support (Android Beta, iOS coming soon)
 - 🧵 **Async API** - Non-blocking inference to prevent UI freezes
+- 📊 **Real Memory Tracking** - OS-level memory metrics (RSS, native heap, available memory) via native APIs
+- 🧮 **Zero-Copy Buffers** - Memory snapshots stored in native ArrayBuffers via `NitroModules.createNativeArrayBuffer()` (v0.34+)
 
 ## Status
 
@@ -56,26 +58,30 @@ cd ios && pod install  # iOS coming soon
 
 ## Example App
 
-The repository includes a fully functional example app in the `example/` directory.
+The repository includes a fully functional example app in the `example/` directory with a dark-themed diagnostic UI that demonstrates model loading, inference, memory tracking, and performance stats.
 
 To run it:
 
-1.  **Navigate to the example directory:**
+1.  **Build the library** (compiles TypeScript to `lib/`):
+
+    ```bash
+    npm run build
+    ```
+
+2.  **Navigate to the example directory and install dependencies:**
 
     ```bash
     cd example
-    ```
-
-2.  **Install dependencies:**
-
-    ```bash
     npm install
     ```
 
-3.  **Run on Android:**
+3.  **Create a development build and run on Android:**
     ```bash
+    npx expo prebuild --clean
     npx expo run:android
     ```
+
+> **Note:** If you change native code (C++/Kotlin), you must run `npx expo prebuild --clean` again.
 
 ## Model Management
 
@@ -206,6 +212,84 @@ console.log(`Generated ${stats.completionTokens} tokens`);
 console.log(`Speed: ${stats.tokensPerSecond.toFixed(1)} tokens/sec`);
 ```
 
+### Memory Tracking
+
+The library provides real OS-level memory usage data. You can query memory at any time, or enable automatic tracking to record snapshots after each inference call.
+
+#### Direct Memory Query
+
+```typescript
+// Get a single real-time snapshot from native APIs
+const usage = llm.getMemoryUsage();
+console.log(`Native heap: ${(usage.nativeHeapBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`RSS: ${(usage.residentBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`Available: ${(usage.availableMemoryBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`Low memory: ${usage.isLowMemory}`);
+```
+
+#### Automatic Tracking with Native Buffers
+
+Enable memory tracking to automatically record snapshots in a native-backed `ArrayBuffer` (allocated via `NitroModules.createNativeArrayBuffer()`) after every inference call:
+
+```typescript
+import { createLLM } from 'react-native-litert-lm';
+
+const llm = createLLM({
+  enableMemoryTracking: true,
+  maxMemorySnapshots: 256, // default
+});
+
+await llm.loadModel('/path/to/model.litertlm', { backend: 'cpu' });
+await llm.sendMessage('Hello!');
+
+// Review tracked data
+const summary = llm.memoryTracker!.getSummary();
+console.log(`Peak RSS: ${(summary.peakResidentBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`Peak Native Heap: ${(summary.peakNativeHeapBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`RSS Delta: ${(summary.residentDeltaBytes / 1024 / 1024).toFixed(1)} MB`);
+console.log(`Snapshots: ${summary.snapshotCount}`);
+```
+
+#### Using the `useModel` Hook with Memory Tracking
+
+```typescript
+import { useModel } from 'react-native-litert-lm';
+
+const { model, isReady, memorySummary, memoryTracker } = useModel(modelUrl, {
+  enableMemoryTracking: true,
+  maxMemorySnapshots: 100,
+});
+
+// memorySummary auto-updates after each inference call
+if (memorySummary) {
+  console.log(`Current RSS: ${memorySummary.currentResidentBytes}`);
+  console.log(`Peak RSS: ${memorySummary.peakResidentBytes}`);
+}
+```
+
+#### Standalone Memory Tracker
+
+```typescript
+import { createMemoryTracker, createNativeBuffer } from 'react-native-litert-lm';
+
+// Create a tracker backed by a native ArrayBuffer
+const tracker = createMemoryTracker(100);
+
+// Manually record snapshots
+tracker.record({
+  timestamp: Date.now(),
+  nativeHeapBytes: 50_000_000,
+  residentBytes: 200_000_000,
+  availableMemoryBytes: 4_000_000_000,
+});
+
+// Access the underlying native buffer (for zero-copy transfer to native code)
+const buffer = tracker.getNativeBuffer();
+
+// Create a standalone native buffer for custom use
+const customBuffer = createNativeBuffer(1024);
+```
+
 ## Supported Models
 
 Download `.litertlm` models automatically using the exported constants or from [HuggingFace](https://huggingface.co/litert-community):
@@ -263,6 +347,19 @@ Send a message with an image attachment (for vision models).
 ### `sendMessageWithAudio(message, audioPath): Promise<string>`
 
 Send a message with an audio attachment (for audio models).
+
+### `getMemoryUsage(): MemoryUsage`
+
+Returns real OS-level memory usage statistics from native APIs. No estimation — reads directly from `mach_task_basic_info` (iOS) / `Debug.getNativeHeapAllocatedSize()` + `/proc/self/status` (Android).
+
+```typescript
+interface MemoryUsage {
+  nativeHeapBytes: number;      // Native heap allocated bytes
+  residentBytes: number;        // Process RSS in bytes
+  availableMemoryBytes: number; // Available system memory in bytes
+  isLowMemory: boolean;         // Whether the system considers memory low
+}
+```
 
 ### `getHistory(): Message[]`
 
@@ -341,7 +438,7 @@ const llamaPrompt = applyLlamaTemplate(history, "You are helpful.");
 ## Requirements
 
 - React Native 0.76+
-- react-native-nitro-modules 0.33.2+
+- react-native-nitro-modules **0.34.1+** (required for `createNativeArrayBuffer` and memory tracking)
 - Android API 26+ (ARM64 only)
 - **LiteRT-LM Android SDK**: `0.9.0-alpha01` (bundled automatically)
 - iOS 15.0+ (coming soon)

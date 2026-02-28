@@ -100,6 +100,21 @@ export interface GenerationStats {
 }
 
 /**
+ * Real memory usage statistics from the native runtime.
+ * Measured from OS-level APIs, not estimated.
+ */
+export interface MemoryUsage {
+  /** Native heap allocated bytes (Debug.getNativeHeapAllocatedSize on Android, malloc_size on iOS) */
+  nativeHeapBytes: number;
+  /** Total process resident set size (RSS) in bytes */
+  residentBytes: number;
+  /** Available system memory in bytes */
+  availableMemoryBytes: number;
+  /** Whether the system considers memory low */
+  isLowMemory: boolean;
+}
+
+/**
  * LiteRT-LM: High-performance LLM inference engine.
  * Supports Gemma 3n, Phi-4, Qwen, and other .litertlm models.
  *
@@ -203,6 +218,12 @@ export interface LiteRTLM extends HybridObject<{
    * Get the last generation statistics.
    */
   getStats(): GenerationStats;
+
+  /**
+   * Get real memory usage from the native runtime.
+   * Uses OS-level APIs to report actual memory consumption.
+   */
+  getMemoryUsage(): MemoryUsage;
 
   /**
    * Release all native resources.

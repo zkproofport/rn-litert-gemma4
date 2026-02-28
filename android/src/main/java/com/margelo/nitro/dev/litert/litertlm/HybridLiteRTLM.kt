@@ -6,6 +6,9 @@
 package com.margelo.nitro.dev.litert.litertlm
 
 import android.util.Log
+import android.os.Debug
+import android.app.ActivityManager
+import android.content.Context
 import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
 import dev.litert.litertlm.LiteRTLMInitProvider
@@ -494,6 +497,50 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
 
     override fun getStats(): GenerationStats {
         return lastStats
+    }
+
+    override fun getMemoryUsage(): MemoryUsage {
+        // Native heap: allocated bytes from Debug APIs (most accurate for native allocations)
+        val nativeHeapBytes = Debug.getNativeHeapAllocatedSize().toDouble()
+
+        // Process RSS: read from /proc/self/status (VmRSS) in kB
+        var residentBytes = 0.0
+        try {
+            java.io.File("/proc/self/status").forEachLine { line ->
+                if (line.startsWith("VmRSS:")) {
+                    val kb = line.substringAfter("VmRSS:").trim().split("\\s+".toRegex())[0].toDoubleOrNull()
+                    if (kb != null) {
+                        residentBytes = kb * 1024.0
+                    }
+                    return@forEachLine
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read /proc/self/status: ${e.message}")
+        }
+
+        // Available memory and low-memory flag from ActivityManager
+        var availableMemoryBytes = 0.0
+        var isLowMemory = false
+        try {
+            val context = LiteRTLMInitProvider.applicationContext
+            if (context != null) {
+                val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val memInfo = ActivityManager.MemoryInfo()
+                activityManager.getMemoryInfo(memInfo)
+                availableMemoryBytes = memInfo.availMem.toDouble()
+                isLowMemory = memInfo.lowMemory
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get ActivityManager memory info: ${e.message}")
+        }
+
+        return MemoryUsage(
+            nativeHeapBytes = nativeHeapBytes,
+            residentBytes = residentBytes,
+            availableMemoryBytes = availableMemoryBytes,
+            isLowMemory = isLowMemory
+        )
     }
 
     override fun close() {

@@ -7,6 +7,7 @@ import type {
   Backend,
   Role,
   GenerationStats,
+  MemoryUsage,
 } from "./specs/LiteRTLM.nitro";
 
 export type {
@@ -16,6 +17,7 @@ export type {
   Backend,
   Role,
   GenerationStats,
+  MemoryUsage,
 } from "./specs/LiteRTLM.nitro";
 
 // Re-export template utilities
@@ -25,6 +27,14 @@ export {
   applyPhiTemplate,
   applyLlamaTemplate,
 } from "./templates";
+
+// Re-export memory tracking utilities (uses NitroModules.createNativeArrayBuffer v0.34+)
+export type {
+  MemorySnapshot,
+  MemoryTracker,
+  MemoryTrackerSummary,
+} from "./memoryTracker";
+export { createMemoryTracker, createNativeBuffer } from "./memoryTracker";
 
 export * from "./hooks";
 

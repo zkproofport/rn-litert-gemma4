@@ -21,6 +21,16 @@
 #include "litert/lm/types.h"
 #endif
 
+// Memory usage headers
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_host.h>
+#endif
+#ifdef __ANDROID__
+#include <malloc.h>
+#include <fstream>
+#endif
+
 #include <string>
 #include <optional>
 #include <vector>
@@ -78,6 +88,8 @@ public:
   bool isReady() override;
   
   GenerationStats getStats() override;
+  
+  MemoryUsage getMemoryUsage() override;
   
   void close() override;
 
