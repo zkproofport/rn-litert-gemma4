@@ -3,6 +3,19 @@ import { LiteRTLM, LLMConfig } from "./specs/LiteRTLM.nitro";
 import { createMemoryTracker, MemoryTracker } from "./memoryTracker";
 
 /**
+ * Extended LiteRT-LM instance with optional memory tracking and
+ * augmented loadModel that accepts a download progress callback.
+ */
+export type LiteRTLMInstance = Omit<LiteRTLM, "loadModel"> & {
+  memoryTracker?: MemoryTracker;
+  loadModel: (
+    pathOrUrl: string,
+    config?: LLMConfig,
+    onDownloadProgress?: (progress: number) => void,
+  ) => Promise<void>;
+};
+
+/**
  * Creates a new LiteRT-LM inference engine instance.
  *
  * Optionally creates a native-backed memory tracker using
@@ -15,7 +28,7 @@ import { createMemoryTracker, MemoryTracker } from "./memoryTracker";
 export function createLLM(options?: {
   enableMemoryTracking?: boolean;
   maxMemorySnapshots?: number;
-}): LiteRTLM & { memoryTracker?: MemoryTracker } {
+}): LiteRTLMInstance {
   const native = NitroModules.createHybridObject<LiteRTLM>("LiteRTLM");
 
   const enableTracking = options?.enableMemoryTracking ?? false;
@@ -44,11 +57,23 @@ export function createLLM(options?: {
   return {
     ...native,
     memoryTracker: tracker,
-    loadModel: async (pathOrUrl: string, config?: LLMConfig) => {
+    loadModel: async (
+      pathOrUrl: string,
+      config?: LLMConfig,
+      onDownloadProgress?: (progress: number) => void,
+    ) => {
       let modelPath = pathOrUrl;
 
-      // Check if it's a URL
+      // Check if it's a URL — enforce HTTPS for model downloads
       if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+        if (pathOrUrl.startsWith("http://")) {
+          throw new Error(
+            "Insecure HTTP URLs are not allowed for model downloads. " +
+              "Use HTTPS instead: " +
+              pathOrUrl.replace("http://", "https://"),
+          );
+        }
+
         // Extract filename from URL
         const fileName = pathOrUrl.split("/").pop();
         if (!fileName) {
@@ -60,7 +85,7 @@ export function createLLM(options?: {
           pathOrUrl,
           fileName,
           (progress) => {
-            console.log(`Download progress: ${progress}`);
+            onDownloadProgress?.(progress);
           },
         );
         console.log(`Model downloaded to: ${modelPath}`);

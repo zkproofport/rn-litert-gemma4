@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { LiteRTLM, LLMConfig } from "./index";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { LLMConfig } from "./index";
 import { createLLM } from "./modelFactory";
+import type { LiteRTLMInstance } from "./modelFactory";
 import type { MemoryTracker, MemoryTrackerSummary } from "./memoryTracker";
 
 export interface UseModelConfig extends LLMConfig {
@@ -21,14 +22,18 @@ export interface UseModelConfig extends LLMConfig {
 }
 
 export interface UseModelResult {
-  model: LiteRTLM | null;
+  model: LiteRTLMInstance | null;
   isReady: boolean;
   isGenerating: boolean;
   downloadProgress: number;
   error: string | null;
   generate: (prompt: string) => Promise<string>;
   reset: () => void;
-  deleteModel: (fileName: string) => Promise<void>;
+  /**
+   * Delete the model file. If no fileName is provided, derives it from
+   * the URL/path passed to useModel.
+   */
+  deleteModel: (fileName?: string) => Promise<void>;
   load: () => Promise<void>;
   /**
    * Memory tracker instance (available when enableMemoryTracking is true).
@@ -43,21 +48,49 @@ export interface UseModelResult {
   memorySummary: MemoryTrackerSummary | null;
 }
 
+/**
+ * Extract a filename from a URL or file path.
+ */
+function extractFileName(pathOrUrl: string): string {
+  return pathOrUrl.split("/").pop() || "model.bin";
+}
+
 export function useModel(
   pathOrUrl: string,
   config?: UseModelConfig,
 ): UseModelResult {
-  const modelRef = useRef<(LiteRTLM & { memoryTracker?: MemoryTracker }) | null>(null);
+  const modelRef = useRef<LiteRTLMInstance | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [memorySummary, setMemorySummary] = useState<MemoryTrackerSummary | null>(null);
 
-  // Extract autoLoad (default true) and memory tracking options
+  // Destructure config into primitive values for stable dependency arrays.
+  // This prevents infinite re-render loops when consumers pass inline config
+  // objects (e.g. useModel(url, { backend: 'cpu' })) without useMemo.
   const autoLoad = config?.autoLoad ?? true;
   const enableMemoryTracking = config?.enableMemoryTracking ?? false;
   const maxMemorySnapshots = config?.maxMemorySnapshots ?? 256;
+  const backend = config?.backend;
+  const systemPrompt = config?.systemPrompt;
+  const maxTokens = config?.maxTokens;
+  const temperature = config?.temperature;
+  const topK = config?.topK;
+  const topP = config?.topP;
+
+  // Build a stable config object from the destructured primitives
+  const nativeConfig = useMemo<LLMConfig>(
+    () => ({
+      ...(backend !== undefined && { backend }),
+      ...(systemPrompt !== undefined && { systemPrompt }),
+      ...(maxTokens !== undefined && { maxTokens }),
+      ...(temperature !== undefined && { temperature }),
+      ...(topK !== undefined && { topK }),
+      ...(topP !== undefined && { topP }),
+    }),
+    [backend, systemPrompt, maxTokens, temperature, topK, topP],
+  );
 
   /**
    * Refresh memory summary from the tracker's native buffer.
@@ -74,11 +107,9 @@ export function useModel(
       enableMemoryTracking,
       maxMemorySnapshots,
     });
-    let isMounted = true;
 
     // Cleanup on unmount
     return () => {
-      isMounted = false;
       try {
         modelRef.current?.close();
       } catch (e) {
@@ -93,36 +124,24 @@ export function useModel(
     setDownloadProgress(0);
 
     try {
-      let modelPath = pathOrUrl;
-
-      // Handle URL download manually to capture progress
-      if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
-        const fileName = pathOrUrl.split("/").pop() || "model.bin";
-
-        if (modelRef.current) {
-          modelPath = await modelRef.current.downloadModel(
-            pathOrUrl,
-            fileName,
-            (progress) => {
-              setDownloadProgress(progress);
-            },
-          );
-        }
-      }
-
       if (modelRef.current) {
-        // Create a clean config object for native loadModel (excluding autoLoad)
-        const nativeConfig: LLMConfig = { ...config };
-        delete (nativeConfig as any).autoLoad;
-
-        await modelRef.current.loadModel(modelPath, nativeConfig);
+        // Delegate URL handling + download to the factory's loadModel,
+        // passing our progress setter as the callback (eliminates
+        // duplicate download logic that was previously in this hook).
+        await modelRef.current.loadModel(
+          pathOrUrl,
+          nativeConfig,
+          (progress) => {
+            setDownloadProgress(progress);
+          },
+        );
         setIsReady(true);
       }
     } catch (e: any) {
       setError(e.message || "Failed to load model");
       console.error(e);
     }
-  }, [pathOrUrl, config]);
+  }, [pathOrUrl, nativeConfig]);
 
   useEffect(() => {
     if (autoLoad) {
@@ -171,13 +190,17 @@ export function useModel(
     }
   }, []);
 
-  const deleteModel = useCallback(async (fileName: string): Promise<void> => {
-    if (modelRef.current) {
-      await modelRef.current.deleteModel(fileName);
-      setIsReady(false);
-      setDownloadProgress(0);
-    }
-  }, []);
+  const deleteModel = useCallback(
+    async (fileName?: string): Promise<void> => {
+      if (modelRef.current) {
+        const resolvedName = fileName ?? extractFileName(pathOrUrl);
+        await modelRef.current.deleteModel(resolvedName);
+        setIsReady(false);
+        setDownloadProgress(0);
+      }
+    },
+    [pathOrUrl],
+  );
 
   return {
     model: modelRef.current,
