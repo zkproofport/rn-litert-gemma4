@@ -86,6 +86,7 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
     private var topK: Int = 40
     private var topP: Double = 0.95
     private var maxTokens: Int = 1024
+    private var systemPrompt: String? = null
 
     override val memorySize: Long
         get() = 1024L * 1024L * 1024L // ~1GB (models are large)
@@ -114,6 +115,7 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
                     cfg.topK?.let { topK = it.toInt() }
                     cfg.topP?.let { topP = it }
                     cfg.maxTokens?.let { maxTokens = it.toInt() }
+                    cfg.systemPrompt?.let { systemPrompt = it }
                 }
     
                 try {
@@ -255,7 +257,7 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
             val userMsg = LiteRTMessage.of(message)
             conversation!!.sendMessageAsync(userMsg, listener)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed into initiate async generation", e)
+            Log.e(TAG, "Failed to initiate async generation", e)
             onToken("Error: ${e.message}", true)
         }
     }
@@ -580,6 +582,21 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
         ensureLoaded()
         // Dispose old conversation if needed
         conversation = engine!!.createConversation()
+        // Apply system prompt/instruction if set
+        systemPrompt?.let { prompt ->
+            if (prompt.isNotEmpty()) {
+                try {
+                    // Send system instruction as the first turn to prime the conversation.
+                    // LiteRT-LM's Conversation API handles chat template formatting,
+                    // including Gemma's <start_of_turn>system block.
+                    val systemMsg = LiteRTMessage.of(listOf(Content.Text(prompt)))
+                    conversation!!.sendMessage(systemMsg)
+                    Log.i(TAG, "System prompt applied (${prompt.length} chars)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to apply system prompt: ${e.message}")
+                }
+            }
+        }
     }
 
 

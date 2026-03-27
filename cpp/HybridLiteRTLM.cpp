@@ -46,6 +46,11 @@ void HybridLiteRTLM::createNewConversation() {
         std::string(conversation_config.status().message()));
   }
   
+  // Apply system prompt/instruction if provided
+  if (!systemPrompt_.empty()) {
+    conversation_config->set_system_instruction(systemPrompt_);
+  }
+  
   auto conversation = litert::lm::Conversation::Create(*engine_, *conversation_config);
   if (!conversation.ok()) {
     throw std::runtime_error("Failed to create conversation: " + 
@@ -96,6 +101,9 @@ void HybridLiteRTLM::loadModel(
     }
     if (config->maxTokens.has_value()) {
       maxTokens_ = config->maxTokens.value();
+    }
+    if (config->systemPrompt.has_value()) {
+      systemPrompt_ = config->systemPrompt.value();
     }
   }
   
@@ -291,9 +299,6 @@ std::string HybridLiteRTLM::sendMessageWithImage(
 #endif
 }
 
-#endif
-}
-
 //------------------------------------------------------------------------------
 // downloadModel - Download model file from URL
 //------------------------------------------------------------------------------
@@ -405,23 +410,26 @@ void HybridLiteRTLM::sendMessageAsync(
   lm_message.role = "user";
   lm_message.content = message;
   
-  std::string fullResponse;
+  // Heap-allocate shared state for the async callback to avoid
+  // use-after-free: this function returns before the callback fires.
+  auto fullResponse = std::make_shared<std::string>();
+  // Copy onToken by value so the std::function survives past function return.
+  auto tokenCallback = onToken;
   
-  // The callback needs to be carefully managed for thread safety
   auto status = conversation_->SendMessageAsync(
     lm_message,
-    [this, &onToken, &fullResponse](const std::string& token, bool isDone) {
-      fullResponse += token;
+    [this, tokenCallback, fullResponse](const std::string& token, bool isDone) {
+      *fullResponse += token;
       
       // Invoke the JS callback (Nitro handles thread marshalling)
-      onToken(token, isDone);
+      tokenCallback(token, isDone);
       
       if (isDone) {
         // Add complete response to history
         std::lock_guard<std::mutex> lock(mutex_);
         Message modelMessage;
         modelMessage.role = Role::MODEL;
-        modelMessage.content = fullResponse;
+        modelMessage.content = *fullResponse;
         history_.push_back(modelMessage);
       }
     }

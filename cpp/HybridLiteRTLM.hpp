@@ -113,6 +113,9 @@ private:
   Backend visionBackend_ = Backend::GPU;  // Gemma 3n requires GPU for vision
   Backend audioBackend_ = Backend::CPU;   // Audio typically CPU
   
+  // System prompt / instruction
+  std::string systemPrompt_;
+  
   // Configuration - sampling parameters
   double temperature_ = 0.7;
   double topK_ = 40.0;
