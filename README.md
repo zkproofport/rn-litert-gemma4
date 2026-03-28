@@ -448,8 +448,7 @@ const prompt = applyGemmaTemplate(
 | react-native-nitro-modules | 0.35.0+       |
 | Android API                | 26+ (ARM64)   |
 | iOS                        | 15.0+ (ARM64) |
-| LiteRT-LM Android SDK      | 0.9.0-alpha01 |
-| LiteRT-LM iOS Engine       | v0.9.0        |
+| LiteRT-LM Engine            | 0.9.0           |
 
 ## Platform Support
 
