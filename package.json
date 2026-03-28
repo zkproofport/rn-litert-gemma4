@@ -1,6 +1,6 @@
 {
   "name": "react-native-litert-lm",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "High-performance LLM inference for React Native using LiteRT-LM. Optimized for Gemma 3n and other on-device language models.",
   "license": "MIT",
   "author": "Hugh Chen (https://github.com/hung-yueh)",
