@@ -18,7 +18,13 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "lib",
-    "rootDir": "src"
+    "rootDir": "src",
+    "baseUrl": ".",
+    "paths": {
+      "react-native": ["example/node_modules/react-native"],
+      "react-native-nitro-modules": ["example/node_modules/react-native-nitro-modules"],
+      "react": ["example/node_modules/@types/react", "example/node_modules/react"]
+    }
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib", "android", "ios", "nitrogen"]

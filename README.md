@@ -1,16 +1,16 @@
 # react-native-litert-lm
 
-High-performance on-device LLM inference for React Native, powered by [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) and [Nitro Modules](https://github.com/mrousavy/nitro). Optimized for **Gemma 3n** and other on-device language models.
+High-performance on-device LLM inference for React Native, powered by [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) and [Nitro Modules](https://github.com/mrousavy/nitro). Optimized for **Gemma 4** and other on-device language models.
 
 ## Features
 
 - 🚀 **Native Performance** — Kotlin (Android) / C++ (iOS) via Nitro Modules JSI bindings
-- 🧠 **Gemma 3n Ready** — First-class support for Gemma 3n E2B/E4B models
+- 🧠 **Gemma 4 Ready** — First-class support for Gemma 4 E2B/E4B multimodal models (text + vision + audio)
 - ⚡ **GPU Acceleration** — GPU delegate (Android), Metal/MPS (iOS)
 - 🔄 **Streaming Support** — Token-by-token generation callbacks
 - 📱 **Cross-Platform** — Android API 26+ / iOS 15.0+
-- 🖼️ **Multimodal** — Image and audio input support (Android)
-- 🧵 **Async API** — Non-blocking inference on background threads
+- 🖼️ **Multimodal** — Image and audio input support
+- 🧵 **Async API** — Non-blocking inference on dedicated large-stack threads
 - 📊 **Real Memory Tracking** — OS-level memory metrics (RSS, native heap, available memory) via native APIs
 - 🧮 **Zero-Copy Buffers** — Memory snapshots stored in native ArrayBuffers via Nitro Modules
 - 📥 **Automatic Model Download** — Downloads models from URL with progress tracking and local caching
@@ -94,7 +94,7 @@ The `example/` directory contains a fully functional test app with a dark-themed
 
 ## Model Management
 
-LiteRT-LM models (like Gemma 3n) are large files (3 GB+) and cannot be bundled into your app binary. They are downloaded at runtime.
+LiteRT-LM models (like Gemma 4) are large files (2–4 GB) and cannot be bundled into your app binary. They are downloaded at runtime.
 
 ### Automatic Downloading
 
@@ -112,16 +112,15 @@ If you prefer to manage downloads yourself (e.g., using `expo-file-system`), dow
 
 ```typescript
 import * as FileSystem from "expo-file-system";
+import { GEMMA_4_E2B_IT } from "react-native-litert-lm";
 
-const MODEL_URL =
-  "https://huggingface.co/litert-community/gemma-3n-2b-it/resolve/main/model.litertlm";
-const localPath = `${FileSystem.documentDirectory}gemma-3n.litertlm`;
+const localPath = `${FileSystem.documentDirectory}gemma-4-E2B-it.litertlm`;
 
 async function downloadModel() {
   const info = await FileSystem.getInfoAsync(localPath);
   if (info.exists) return localPath;
 
-  await FileSystem.downloadAsync(MODEL_URL, localPath);
+  await FileSystem.downloadAsync(GEMMA_4_E2B_IT, localPath);
   return localPath;
 }
 ```
@@ -133,7 +132,7 @@ async function downloadModel() {
 The `useModel` hook manages the full model lifecycle: downloading, loading, inference, and cleanup.
 
 ```typescript
-import { useModel, GEMMA_3N_E2B_IT_INT4 } from "react-native-litert-lm";
+import { useModel, GEMMA_4_E2B_IT } from "react-native-litert-lm";
 import { Platform } from "react-native";
 
 function App() {
@@ -145,8 +144,8 @@ function App() {
     load,          // Manually trigger load
     deleteModel,   // Delete cached model file
     memorySummary, // Auto-updated memory stats (if tracking enabled)
-  } = useModel(GEMMA_3N_E2B_IT_INT4, {
-    backend: Platform.OS === 'ios' ? 'gpu' : 'cpu',
+  } = useModel(GEMMA_4_E2B_IT, {
+    backend: 'cpu',
     autoLoad: true, // Default: true. Set false to load manually via load().
     systemPrompt: "You are a helpful assistant.",
     enableMemoryTracking: true,
@@ -206,7 +205,7 @@ const warning = checkMultimodalSupport();
 if (warning) {
   console.warn(warning); // Experimental on iOS
 } else {
-  // Image input (for vision models like Gemma 3n)
+  // Image input (for vision models like Gemma 4)
   // Images >1024px are automatically resized to prevent OOM
   const response = await llm.sendMessageWithImage(
     "What's in this image?",
@@ -310,15 +309,20 @@ const buffer = tracker.getNativeBuffer();
 
 Download `.litertlm` models automatically using the exported URL constants, or manually from [HuggingFace](https://huggingface.co/litert-community):
 
-| Constant               | Model                                  | Size  | Min RAM |
-| :--------------------- | :------------------------------------- | :---- | :------ |
-| `GEMMA_3N_E2B_IT_INT4` | Gemma 3n E2B (Instruction Tuned, Int4) | ~3 GB | 4 GB+   |
+| Constant               | Model                              | Size     | Min RAM | Auth Required |
+| :--------------------- | :--------------------------------- | :------- | :------ | :------------ |
+| `GEMMA_4_E2B_IT`       | Gemma 4 E2B (Multimodal, IT)       | 2.58 GB  | 4 GB+   | ❌ No          |
+| `GEMMA_4_E4B_IT`       | Gemma 4 E4B (Higher Quality)       | 3.65 GB  | 6 GB+   | ❌ No          |
+| `GEMMA_3N_E2B_IT_INT4` | Gemma 3n E2B (Int4, Multimodal)    | ~1.3 GB  | 4 GB+   | ✅ HuggingFace |
+
+> **Recommended:** Use `GEMMA_4_E2B_IT` for most use cases. It's multimodal (text + vision + audio) and downloads directly from HuggingFace without requiring an account.
+>
+> **iOS Note:** Models larger than ~2 GB (like Gemma 4) require the `com.apple.developer.kernel.extended-virtual-addressing` entitlement. See [iOS Entitlements](#ios-entitlements) below.
 
 **Other compatible models** (download manually from HuggingFace):
 
 | Model         | Size    | Min RAM | Notes                 |
 | ------------- | ------- | ------- | --------------------- |
-| Gemma 3n E4B  | ~4 GB   | 8 GB+   | Higher quality        |
 | Gemma 3 1B    | ~1 GB   | 4 GB+   | Smallest, fastest     |
 | Phi-4 Mini    | ~2 GB   | 4 GB+   | Microsoft's small LLM |
 | Qwen 2.5 1.5B | ~1.5 GB | 4 GB+   | Multilingual          |
@@ -339,7 +343,7 @@ Loads a model from a local path or HTTPS URL.
 | Parameter             | Type     | Default | Description                               |
 | --------------------- | -------- | ------- | ----------------------------------------- |
 | `path`                | `string` | —       | Absolute path to `.litertlm` or HTTPS URL |
-| `config.backend`      | `string` | `'gpu'` | `'cpu'`, `'gpu'`, or `'npu'`              |
+| `config.backend`      | `string` | `'cpu'` | `'cpu'`, `'gpu'`, or `'npu'`              |
 | `config.systemPrompt` | `string` | —       | System prompt for the model               |
 | `config.temperature`  | `number` | `0.7`   | Sampling temperature                      |
 | `config.topK`         | `number` | `40`    | Top-K sampling                            |
@@ -354,7 +358,7 @@ Loads a model from a local path or HTTPS URL.
 | `'gpu'` | GPU / Metal         | Fast    | Recommended default                            |
 | `'npu'` | NPU / Neural Engine | Fastest | Requires supported hardware; falls back to GPU |
 
-> **iOS**: `'gpu'` uses Metal/MPS and is the recommended backend. The engine automatically tries multiple backend combinations if the primary one fails.
+> **iOS**: `'cpu'` is the recommended default backend. `'gpu'` (Metal/MPS) is also supported. The engine automatically tries multiple backend combinations if the primary one fails.
 
 ### `sendMessage(message): Promise<string>`
 
@@ -366,11 +370,11 @@ Streaming generation. Callback signature: `(token: string, isDone: boolean) => v
 
 ### `sendMessageWithImage(message, imagePath): Promise<string>`
 
-Send a message with an image (Android only; for vision models like Gemma 3n).
+Send a message with an image (for vision models like Gemma 4 E2B).
 
 ### `sendMessageWithAudio(message, audioPath): Promise<string>`
 
-Send a message with audio (Android only).
+Send a message with audio (for audio-capable models like Gemma 4 E2B).
 
 ### `getStats(): GenerationStats`
 
@@ -448,7 +452,7 @@ const prompt = applyGemmaTemplate(
 | react-native-nitro-modules | 0.35.0+       |
 | Android API                | 26+ (ARM64)   |
 | iOS                        | 15.0+ (ARM64) |
-| LiteRT-LM Engine            | 0.9.0           |
+| LiteRT-LM Engine            | 0.10.1          |
 
 ## Platform Support
 
@@ -463,13 +467,27 @@ const prompt = applyGemmaTemplate(
 | ---------------------------- | ------ | ----------------------------------------------------- |
 | Text inference (blocking)    | ✅     | Via LiteRT-LM C API                                   |
 | Text inference (streaming)   | ✅     | Token-by-token callbacks                              |
-| GPU inference (Metal/MPS)    | ✅     | Recommended backend                                   |
+| CPU inference                | ✅     | Recommended default backend                           |
+| GPU inference (Metal/MPS)    | ✅     | Supported via `backend: 'gpu'`                        |
 | Model download with progress | ✅     | NSURLSession, cached in `Caches/`                     |
 | Memory tracking              | ✅     | `mach_task_basic_info`                                |
 | Multi-turn conversation      | ✅     | Context retained across turns                         |
 | Multimodal (image/audio)     | 🧪     | Code paths exist; vision/audio executors experimental |
 | Constrained decoding         | ❌     | Requires llguidance Rust runtime                      |
 | Function calling             | ❌     | Requires Rust CXX bridge runtime                      |
+
+### iOS Entitlements
+
+Models larger than ~2 GB (like Gemma 4 E2B at 2.58 GB) require the **Extended Virtual Addressing** entitlement on iOS physical devices. Without it, iOS limits virtual memory to ~2 GB and the app will be killed by Jetsam.
+
+Add to your app's `.entitlements` file:
+
+```xml
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+<true/>
+```
+
+> **Note:** This entitlement requires a **paid Apple Developer account** ($99/year). Gemma 3n E2B (~1.3 GB) works without it.
 
 ## Building the iOS Engine
 
@@ -488,7 +506,7 @@ The iOS build uses a **Bazel-to-XCFramework pipeline** that compiles the LiteRT-
 
 This will:
 
-1. Clone/checkout LiteRT-LM `v0.9.0` source into `.litert-lm-build/`
+1. Clone/checkout LiteRT-LM `v0.10.1` source into `.litert-lm-build/`
 2. Build `//c:engine` for `ios_arm64` and `ios_sim_arm64` via Bazel
 3. Collect all transitive `.o` files (engine, protobuf, re2, sentencepiece, etc.)
 4. Compile C/C++ stubs for unavailable Rust dependencies
@@ -540,7 +558,7 @@ Additionally, `PromptTemplate` is patched at build time to use a simplified C++ 
 ```
 
 - **Android**: Kotlin (`HybridLiteRTLM.kt`) interfacing with the `litertlm-android` AAR.
-- **iOS**: C++ (`HybridLiteRTLM.cpp`) interfacing with the LiteRT-LM C API via a prebuilt `LiteRTLM.xcframework`. Platform-specific code (model downloading, file management) is in Objective-C++ (`ios/IOSDownloadHelper.mm`).
+- **iOS**: C++ (`HybridLiteRTLM.cpp`) interfacing with the LiteRT-LM C API via a prebuilt `LiteRTLM.xcframework`. All engine operations (load, inference, streaming) run on dedicated `pthread` threads with 8 MB stack to accommodate XNNPack's stack requirements. Platform-specific code (model downloading, file management) is in Objective-C++ (`ios/IOSDownloadHelper.mm`).
 
 > **For contributors**: Changes to `cpp/HybridLiteRTLM.cpp` do not affect Android. Feature changes must be applied to both the Kotlin and C++ implementations.
 

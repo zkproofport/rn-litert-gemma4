@@ -333,16 +333,3 @@ index fa2bdff..e180b2b 100644
 +  volatile const void* p = &litert::lm::kEngineRegisterer;
 +  (void)p;
 +}
-diff --git a/runtime/util/memory_mapped_file_posix.cc b/runtime/util/memory_mapped_file_posix.cc
-index f04cdb0..703a640 100644
---- a/runtime/util/memory_mapped_file_posix.cc
-+++ b/runtime/util/memory_mapped_file_posix.cc
-@@ -110,7 +110,7 @@ absl::StatusOr<std::unique_ptr<MemoryMappedFile>> MemoryMappedFile::Create(
-   }
- 
-   void* data =
--      mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_PRIVATE, file, offset);
-+      mmap(nullptr, length, PROT_READ, MAP_PRIVATE, file, offset);
-   RET_CHECK_NE(data, MAP_FAILED) << "Failed to map, error: " << strerror(errno);
-   RET_CHECK_NE(data, nullptr) << "Failed to map.";
- #ifdef __APPLE__

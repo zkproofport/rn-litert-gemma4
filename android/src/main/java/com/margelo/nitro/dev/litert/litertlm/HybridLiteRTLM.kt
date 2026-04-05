@@ -44,8 +44,8 @@ internal class StreamingCallbackListener(
     private val history: MutableList<Message>,
 ) : com.google.ai.edge.litertlm.MessageCallback {
 
-    override fun onMessage(responseMsg: com.google.ai.edge.litertlm.LiteRTMessage) {
-        val chunk = responseMsg.contents
+    override fun onMessage(responseMsg: com.google.ai.edge.litertlm.Message) {
+        val chunk = responseMsg.contents.contents
             .filterIsInstance<com.google.ai.edge.litertlm.Content.Text>()
             .joinToString("") { it.text }
 
@@ -123,7 +123,7 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
     )
 
     // Configuration
-    private var backend: Backend = Backend.GPU
+    private var backend: Backend = Backend.CPU
     private var temperature: Double = 0.7
     private var topK: Int = 40
     private var topP: Double = 0.95
@@ -161,21 +161,21 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
                 }
     
                 try {
-                    // Map our Backend enum to LiteRT-LM Backend enum
+                    // Map our Backend enum to LiteRT-LM Backend sealed class
                     val lmBackend = when (backend) {
-                        Backend.GPU -> com.google.ai.edge.litertlm.Backend.GPU
+                        Backend.GPU -> com.google.ai.edge.litertlm.Backend.GPU()
                         Backend.NPU -> {
                             Log.i(TAG, "NPU backend requested - requires hardware support")
-                            com.google.ai.edge.litertlm.Backend.NPU
+                            com.google.ai.edge.litertlm.Backend.NPU()
                         }
-                        else -> com.google.ai.edge.litertlm.Backend.CPU
+                        else -> com.google.ai.edge.litertlm.Backend.CPU()
                     }
                     
-                    // Vision backend: hardcoded to GPU (required by Gemma 3n)
-                    val lmVisionBackend = com.google.ai.edge.litertlm.Backend.GPU
+                    // Vision backend: hardcoded to GPU (required by Gemma models)
+                    val lmVisionBackend = com.google.ai.edge.litertlm.Backend.GPU()
                         
                     // Audio backend: hardcoded to CPU (optimal for audio processing)
-                    val lmAudioBackend = com.google.ai.edge.litertlm.Backend.CPU
+                    val lmAudioBackend = com.google.ai.edge.litertlm.Backend.CPU()
     
                     Log.i(TAG, "Backend config: main=$lmBackend, vision=$lmVisionBackend (hardcoded), audio=$lmAudioBackend (hardcoded)")
     
@@ -228,13 +228,13 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
             Log.i(TAG, "sendMessage (Promise): $message")
             
             // Blocking inference (safe here because we are in Promise.parallel worker thread)
-            val userMsg = LiteRTMessage.of(message)
+            val userMsg = LiteRTMessage.of(text = message)
             val startTime = System.nanoTime()
-            val responseMsg = conversation!!.sendMessage(userMsg)
+            val responseMsg = conversation!!.sendMessage(message = userMsg)
             val elapsedMs = (System.nanoTime() - startTime) / 1_000_000.0
             
             // Extract text
-            val response = responseMsg.contents
+            val response = responseMsg.contents.contents
                 .filterIsInstance<com.google.ai.edge.litertlm.Content.Text>()
                 .joinToString("") { it.text } 
             
@@ -242,6 +242,9 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
             history.add(Message(Role.MODEL, response))
             
             // Update stats with real timing data
+            // Token count heuristic: LiteRT-LM Android SDK does not expose
+            // actual token counts from inference. We approximate using
+            // ~4 chars/token. iOS uses the C API benchmark info for real counts.
             val promptTokens = message.length / 4.0
             val completionTokens = response.length / 4.0
             lastStats = GenerationStats(
@@ -279,8 +282,8 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
         )
 
         try {
-            val userMsg = LiteRTMessage.of(message)
-            conversation!!.sendMessageAsync(userMsg, listener)
+            val userMsg = LiteRTMessage.of(text = message)
+            conversation!!.sendMessageAsync(message = userMsg, callback = listener)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initiate async generation", e)
             onToken("Error: ${e.message}", true)
@@ -343,19 +346,14 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
             // Use factory method Message.of passing a list of Content
             val textContent = Content.Text(message)
             
-            val contentList = listOf(
-                textContent,
-                Content.ImageFile(processedImagePath)
-            )
-
-            val userMsg = LiteRTMessage.of(contentList)
+            val userMsg = LiteRTMessage.of(textContent, Content.ImageFile(processedImagePath))
 
             // Add to history
             history.add(Message(Role.USER, "$message [Image]"))
 
-            val responseMsg = conversation!!.sendMessage(userMsg)
+            val responseMsg = conversation!!.sendMessage(message = userMsg)
             
-            val response = responseMsg.contents
+            val response = responseMsg.contents.contents
                 .filterIsInstance<Content.Text>()
                 .joinToString("") { it.text }
 
@@ -490,18 +488,16 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
 
             // Load audio
             
-            val contentList = listOf(
+            val userMsg = LiteRTMessage.of(
                 Content.Text(message),
                 Content.AudioFile(audioPath)
             )
-            
-            val userMsg = LiteRTMessage.of(contentList)
 
             history.add(Message(Role.USER, "$message [Audio]"))
             
-            val responseMsg = conversation!!.sendMessage(userMsg)
+            val responseMsg = conversation!!.sendMessage(message = userMsg)
             
-            val response = responseMsg.contents
+            val response = responseMsg.contents.contents
                 .filterIsInstance<Content.Text>()
                 .joinToString("") { it.text }
                 
@@ -628,8 +624,8 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
                     // Send system instruction as the first turn to prime the conversation.
                     // LiteRT-LM's Conversation API handles chat template formatting,
                     // including Gemma's <start_of_turn>system block.
-                    val systemMsg = LiteRTMessage.of(listOf(Content.Text(prompt)))
-                    conversation!!.sendMessage(systemMsg)
+                    val systemMsg = LiteRTMessage.of(Content.Text(prompt))
+                    conversation!!.sendMessage(message = systemMsg)
                     Log.i(TAG, "System prompt applied (${prompt.length} chars)")
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to apply system prompt: ${e.message}")

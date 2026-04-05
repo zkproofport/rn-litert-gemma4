@@ -3,7 +3,7 @@
 // react-native-litert-lm
 //
 // High-performance LLM inference using LiteRT-LM.
-// Supports Gemma 3n and other .litertlm models.
+// Supports Gemma 4, Gemma 3n, and other .litertlm models.
 //
 // NOTE: This C++ implementation is used for iOS ONLY.
 // Android uses the Kotlin implementation in `android/src/main/java/com/margelo/nitro/dev/litert/litertlm/HybridLiteRTLM.kt`.
@@ -112,7 +112,7 @@ private:
   mutable std::mutex mutex_;
   
   // Configuration - backend
-  Backend backend_ = Backend::GPU;
+  Backend backend_ = Backend::CPU;
   
   // System prompt / instruction
   std::string systemPrompt_;

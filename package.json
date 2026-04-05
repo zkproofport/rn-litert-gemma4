@@ -1,7 +1,12 @@
 {
   "name": "react-native-litert-lm",
   "version": "0.3.1",
-  "description": "High-performance LLM inference for React Native using LiteRT-LM. Optimized for Gemma 3n and other on-device language models.",
+  "litertLm": {
+    "version": "0.10.1",
+    "androidMavenVersion": "0.10.0",
+    "iosGitTag": "v0.10.1"
+  },
+  "description": "High-performance LLM inference for React Native using LiteRT-LM. Optimized for Gemma 4 and other on-device language models.",
   "license": "MIT",
   "author": "Hugh Chen (https://github.com/hung-yueh)",
   "repository": {
@@ -19,6 +24,7 @@
     "litert-lm",
     "llm",
     "gemma",
+    "gemma-4",
     "gemma-3n",
     "ai",
     "machine-learning",
@@ -69,26 +75,26 @@
     "release": "release-it"
   },
   "devDependencies": {
-    "@expo/config-plugins": "~54.0.4",
-    "@types/react": "~19.1.10",
-    "expo": "^54.0.31",
-    "nitrogen": "^0.35.0",
-    "react": "19.1.0",
-    "react-native": "0.81.5",
+    "@expo/config-plugins": "~55.0.0",
+    "@types/react": "~19.2.10",
     "release-it": "^19.2.4",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
-    "expo": ">=54.0.0",
+    "expo": ">=55.0.0",
     "react": "*",
-    "react-native": "*"
+    "react-native": "*",
+    "react-native-nitro-modules": "^0.35.0"
   },
   "peerDependenciesMeta": {
     "expo": {
       "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
     }
-  },
-  "dependencies": {
-    "react-native-nitro-modules": "^0.35.0"
   }
 }

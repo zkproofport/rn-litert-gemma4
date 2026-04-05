@@ -79,6 +79,10 @@ export { createLLM } from "./modelFactory";
  * Use with model download utilities or as reference.
  */
 export const Models = {
+  /** Gemma 4 E2B Instruct (2B parameters, latest generation) */
+  GEMMA_4_E2B: "gemma-4-E2B-it-litert-lm",
+  /** Gemma 4 E4B Instruct (4B parameters, higher quality) */
+  GEMMA_4_E4B: "gemma-4-E4B-it-litert-lm",
   /** Gemma 3n E2B (2B parameters, efficient) */
   GEMMA_3N_E2B: "gemma-3n-E2B-it-litert-lm-preview",
   /** Gemma 3n E4B (4B parameters, higher quality) */
@@ -95,9 +99,10 @@ export type ModelId = (typeof Models)[keyof typeof Models];
 
 /**
  * Get the recommended backend for the current platform.
- * Returns 'gpu' for most devices as it provides the best balance of speed and compatibility.
+ * Returns 'cpu' as the safe default. GPU (Metal on iOS, GPU delegate on Android)
+ * is faster but may not be available on all devices or model configurations.
  *
- * @returns The recommended backend ('gpu' for most cases)
+ * @returns The recommended backend ('cpu')
  *
  * @example
  * ```typescript
@@ -106,9 +111,9 @@ export type ModelId = (typeof Models)[keyof typeof Models];
  * ```
  */
 export function getRecommendedBackend(): Backend {
-  // GPU is the recommended default for all platforms
-  // It provides good performance and broad compatibility
-  return "gpu";
+  // CPU is the safe default — always available, broadly compatible.
+  // GPU is faster but may fail on some models/devices.
+  return "cpu";
 }
 
 /**
@@ -165,6 +170,22 @@ export function checkMultimodalSupport(): string | undefined {
 
 /**
  * Download URL for the Gemma 3n E2B IT INT4 model.
+ * Note: Requires a HuggingFace account (gated model).
  */
 export const GEMMA_3N_E2B_IT_INT4 =
   "https://litert.dev/gemma-3n-E2B-it-int4.litertlm";
+
+/**
+ * Download URL for the Gemma 4 E2B IT model (2.58 GB).
+ * Public — no HuggingFace account required.
+ */
+export const GEMMA_4_E2B_IT =
+  "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm";
+
+/**
+ * Download URL for the Gemma 4 E4B IT model (3.65 GB).
+ * Higher quality than E2B but requires more device memory.
+ * Public — no HuggingFace account required.
+ */
+export const GEMMA_4_E4B_IT =
+  "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm";

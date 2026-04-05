@@ -2,7 +2,7 @@
   "git": {
     "commitMessage": "chore: release ${version}",
     "tagName": "v${version}",
-    "requireCleanWorkingDir": true
+    "requireCleanWorkingDir": false
   },
   "github": {
     "release": true,
@@ -13,6 +13,6 @@
   },
   "hooks": {
     "before:init": "npm run build",
-    "after:bump": "scripts/download-ios-frameworks.sh"
+    "after:bump": "scripts/build-ios-engine.sh"
   }
 }

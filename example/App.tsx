@@ -9,11 +9,13 @@ import {
   ActivityIndicator,
   TextInput,
   Image,
+  Switch,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
   useModel,
   GEMMA_3N_E2B_IT_INT4,
+  GEMMA_4_E2B_IT,
   checkMultimodalSupport,
   checkBackendSupport,
   applyGemmaTemplate,
@@ -24,30 +26,32 @@ import {
 // Test asset paths — resolved at runtime from bundled assets
 // On iOS, Metro bundles images into the app; resolveAssetSource gives us a URI.
 // On Android, the file must be pre-pushed to the device.
-const TEST_IMAGE_ASSET = require('./test.jpeg');
+const TEST_IMAGE_ASSET = require("./test.jpeg");
 
 async function getTestImagePath(modelInstance?: any): Promise<string> {
-  if (Platform.OS === 'android') {
-    return '/data/local/tmp/test.jpeg';
+  if (Platform.OS === "android") {
+    return "/data/local/tmp/test.jpeg";
   }
   // iOS: resolveAssetSource returns a file:// URI for local assets in prod,
   // but an HTTP URL in dev mode (Metro-served)
   const source = Image.resolveAssetSource(TEST_IMAGE_ASSET);
-  if (source.uri.startsWith('file://')) {
-    return source.uri.replace('file://', '');
+  if (source.uri.startsWith("file://")) {
+    return source.uri.replace("file://", "");
   }
-  // Dev mode: Metro serves via HTTP — use the model's download helper 
+  // Dev mode: Metro serves via HTTP — use the model's download helper
   // to fetch it to a local cache file
   if (modelInstance?.downloadModel) {
-    return await modelInstance.downloadModel(source.uri, 'test_image.jpeg');
+    return await modelInstance.downloadModel(source.uri, "test_image.jpeg");
   }
-  throw new Error('Cannot resolve test image path in dev mode without model instance');
+  throw new Error(
+    "Cannot resolve test image path in dev mode without model instance",
+  );
 }
 
 const TEST_AUDIO_PATH = Platform.select({
-  ios: '/tmp/test.wav', // Audio test not yet supported on iOS
-  android: '/data/local/tmp/test.wav',
-  default: '/tmp/test.wav',
+  ios: "/tmp/test.wav", // Audio test not yet supported on iOS
+  android: "/data/local/tmp/test.wav",
+  default: "/tmp/test.wav",
 })!;
 
 const THEME = {
@@ -85,16 +89,26 @@ export default function App() {
 }
 
 function Main() {
+  const [useGpu, setUseGpu] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<"gemma3n" | "gemma4">(
+    "gemma3n",
+  );
+
+  const MODEL_OPTIONS = {
+    gemma3n: { label: "Gemma 3n E2B (1.3 GB)", url: GEMMA_3N_E2B_IT_INT4 },
+    gemma4: { label: "Gemma 4 E2B (2.6 GB)", url: GEMMA_4_E2B_IT },
+  };
+
   const config = useMemo(
     () => ({
-      backend: Platform.OS === 'ios' ? 'gpu' as const : 'cpu' as const,
+      backend: useGpu ? ("gpu" as const) : ("cpu" as const),
       systemPrompt: "You are a helpful assistant.",
       maxTokens: 1024,
       autoLoad: false,
       enableMemoryTracking: true,
       maxMemorySnapshots: 100,
     }),
-    [],
+    [useGpu],
   );
 
   const {
@@ -106,13 +120,13 @@ function Main() {
     load,
     memoryTracker,
     memorySummary,
-  } = useModel(GEMMA_3N_E2B_IT_INT4, config);
+  } = useModel(MODEL_OPTIONS[selectedModel].url, config);
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [lastLatency, setLastLatency] = useState<number | null>(null);
   const [tokensPerSec, setTokensPerSec] = useState<number | null>(null);
-  const [chatInput, setChatInput] = useState('');
+  const [chatInput, setChatInput] = useState("");
 
   const log = useCallback(
     (message: string, type: LogEntry["type"] = "info") => {
@@ -134,7 +148,10 @@ function Main() {
       log("Starting Full Test Suite...", "info");
 
       // Test 1: Hook state
-      log(`Model instance: ${!!model ? "✓" : "✗"}`, model ? "success" : "error");
+      log(
+        `Model instance: ${!!model ? "✓" : "✗"}`,
+        model ? "success" : "error",
+      );
       log(`isReady: ${isReady}`, "success");
 
       // Test 2: Backend support
@@ -198,10 +215,7 @@ function Main() {
           (token: string, done: boolean) => {
             streamCount++;
             if (done) {
-              log(
-                `Streaming: ${streamCount} callbacks`,
-                "success",
-              );
+              log(`Streaming: ${streamCount} callbacks`, "success");
               resolve();
             }
           },
@@ -246,13 +260,17 @@ function Main() {
         log("Memory tracking disabled", "info");
       }
 
-      // Test 11: Image (vision works on iOS, audio doesn't)
-      // Note: Vision executor needs ~2GB additional memory on top of the text model.
+      // Test 11: Image (vision)
+      // Vision executor needs ~2GB additional memory on top of the text model.
       // Skip if insufficient memory to avoid jetsam kills.
       const memBeforeImage = model.getMemoryUsage();
-      const availGB = memBeforeImage.availableMemoryBytes / (1024 * 1024 * 1024);
+      const availGB =
+        memBeforeImage.availableMemoryBytes / (1024 * 1024 * 1024);
       if (availGB < 4.0) {
-        log(`Image skipped: only ${availGB.toFixed(1)} GB available (need ~4 GB for vision encoder)`, "info");
+        log(
+          `Image skipped: only ${availGB.toFixed(1)} GB available (need ~4 GB for vision encoder)`,
+          "info",
+        );
       } else {
         try {
           const imagePath = await getTestImagePath(model);
@@ -268,7 +286,7 @@ function Main() {
       }
 
       // Test 12: Audio (not supported on iOS yet)
-      if (Platform.OS !== 'ios') {
+      if (Platform.OS !== "ios") {
         try {
           const audioResp = await model.sendMessageWithAudio(
             "Transcribe this audio.",
@@ -345,8 +363,52 @@ function Main() {
             label="Platform"
             value={`${Platform.OS} ${Platform.Version}`}
           />
-          <InfoRow label="Backend" value={config.backend.toUpperCase()} />
-          <InfoRow label="Architecture" value={Platform.OS === 'ios' ? 'arm64' : 'arm64'} />
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Gemma Model</Text>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {(
+                Object.keys(MODEL_OPTIONS) as Array<keyof typeof MODEL_OPTIONS>
+              ).map((key) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => setSelectedModel(key)}
+                  disabled={isReady || isRunning || downloadProgress > 0}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 6,
+                    backgroundColor:
+                      selectedModel === key ? THEME.accent : THEME.border,
+                    opacity:
+                      isReady || isRunning || downloadProgress > 0 ? 0.5 : 1,
+                  }}
+                >
+                  <Text style={{ color: THEME.text, fontSize: 12 }}>
+                    {key === "gemma3n" ? "3n" : "4"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Backend</Text>
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+            >
+              <Text style={styles.infoValue}>
+                {config.backend.toUpperCase()}
+              </Text>
+              <Switch
+                value={useGpu}
+                onValueChange={setUseGpu}
+                disabled={isReady || isRunning || downloadProgress > 0}
+              />
+            </View>
+          </View>
+          <InfoRow
+            label="Architecture"
+            value={Platform.OS === "ios" ? "arm64" : "arm64"}
+          />
         </Section>
 
         <Section title="Model">
@@ -360,7 +422,10 @@ function Main() {
                     : "Model Not Loaded"}
               </Text>
               <Text style={styles.instructionText}>
-                Download Gemma 3n E2B INT4 (~1.3 GB) or load from disk.
+                Download {MODEL_OPTIONS[selectedModel].label} or load from disk.
+                {selectedModel === "gemma4" && Platform.OS === "ios"
+                  ? "\n⚠️ Gemma 4 requires Extended Virtual Addressing entitlement on iOS."
+                  : ""}
               </Text>
               <View style={styles.buttonGroup}>
                 <TouchableOpacity
@@ -382,9 +447,7 @@ function Main() {
           ) : (
             <>
               <View style={styles.successBox}>
-                <Text style={styles.successText}>
-                  ✓ Gemma 3n E2B Ready
-                </Text>
+                <Text style={styles.successText}>✓ {MODEL_OPTIONS[selectedModel].label} Ready</Text>
               </View>
               {error && (
                 <Text
@@ -422,7 +485,10 @@ function Main() {
                 style={[styles.secondaryButton, { borderColor: THEME.error }]}
                 onPress={async () => {
                   try {
-                    await deleteModel("gemma-3n-E2B-it-int4.litertlm");
+                    const fileName = selectedModel === "gemma4"
+                      ? "gemma-4-E2B-it.litertlm"
+                      : "gemma-3n-E2B-it-int4.litertlm";
+                    await deleteModel(fileName);
                     log("Model deleted", "success");
                   } catch (e: any) {
                     log(`Delete failed: ${e.message}`, "error");
@@ -456,19 +522,19 @@ function Main() {
                 onPress={async () => {
                   if (!model || !chatInput.trim()) return;
                   const msg = chatInput.trim();
-                  setChatInput('');
+                  setChatInput("");
                   setIsRunning(true);
-                  log(`You: ${msg}`, 'info');
+                  log(`You: ${msg}`, "info");
                   try {
                     const t0 = Date.now();
                     const resp = await model.sendMessage(msg);
                     const elapsed = Date.now() - t0;
                     setLastLatency(elapsed);
-                    log(`Model: ${resp}`, 'success');
+                    log(`Model: ${resp}`, "success");
                     const stats = model.getStats();
                     setTokensPerSec(stats.tokensPerSecond);
                   } catch (e: any) {
-                    log(`Error: ${e.message}`, 'error');
+                    log(`Error: ${e.message}`, "error");
                   } finally {
                     setIsRunning(false);
                   }

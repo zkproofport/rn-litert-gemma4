@@ -9,9 +9,13 @@ plugins {
 // Apply Nitrogen autolinking
 apply from: '../nitrogen/generated/android/LiteRTLM+autolinking.gradle'
 
+// Read LiteRT-LM SDK version from package.json (single source of truth)
+def packageJson = new groovy.json.JsonSlurper().parseText(file('../package.json').text)
+def litertLmVersion = packageJson.litertLm.androidMavenVersion
+
 android {
     namespace "dev.litert.litertlm"
-    compileSdk 35
+    compileSdk 36
     
     defaultConfig {
         minSdk 26  // LiteRT-LM requires API 26+
@@ -84,5 +88,5 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     
     // LiteRT-LM Kotlin API
-    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.9.0'
+    implementation "com.google.ai.edge.litertlm:litertlm-android:${litertLmVersion}"
 }

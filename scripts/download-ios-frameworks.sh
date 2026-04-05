@@ -19,7 +19,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$PROJECT_ROOT/ios/Frameworks"
 C_API_HEADER_DIR="$PROJECT_ROOT/cpp/include"
 
-LITERT_LM_VERSION="v0.9.0"
+LITERT_LM_VERSION="$(node -e "console.log(require('$PROJECT_ROOT/package.json').litertLm.iosGitTag)")"
 GITHUB_RAW="https://github.com/google-ai-edge/LiteRT-LM/raw/${LITERT_LM_VERSION}"
 
 # Read version from package.json

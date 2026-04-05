@@ -23,12 +23,51 @@
 
 #ifdef __APPLE__
 #include "IOSDownloadHelper.h"
+#include <os/proc.h>
 #endif
 #include <fstream>
 #include <thread>
 #include <regex>
+#include <pthread.h>
+#include <functional>
 
 namespace margelo::nitro::litertlm {
+
+// =============================================================================
+// Thread Helper — LiteRT engine operations need >512KB stack (XNNPack, Metal)
+// =============================================================================
+
+static void runOnLargeStack(std::function<void()> work, size_t stackSize = 8 * 1024 * 1024) {
+  struct Context {
+    std::function<void()> fn;
+    std::exception_ptr exception;
+  };
+  Context ctx{std::move(work), nullptr};
+
+  pthread_t thread;
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, stackSize);
+
+  int rc = pthread_create(&thread, &attr, [](void* arg) -> void* {
+    auto* c = static_cast<Context*>(arg);
+    try {
+      c->fn();
+    } catch (...) {
+      c->exception = std::current_exception();
+    }
+    return nullptr;
+  }, &ctx);
+  pthread_attr_destroy(&attr);
+  if (rc != 0) {
+    throw std::runtime_error("Failed to create large-stack thread (errno: " + std::to_string(rc) + ")");
+  }
+  pthread_join(thread, nullptr);
+
+  if (ctx.exception) {
+    std::rethrow_exception(ctx.exception);
+  }
+}
 
 // =============================================================================
 // JSON Helpers
@@ -191,7 +230,9 @@ std::shared_ptr<Promise<void>> HybridLiteRTLM::loadModel(
     const std::string& modelPath,
     const std::optional<LLMConfig>& config) {
   return Promise<void>::async([this, modelPath, config]() {
-    loadModelInternal(modelPath, config);
+    runOnLargeStack([&]() {
+      loadModelInternal(modelPath, config);
+    });
   });
 }
 
@@ -336,7 +377,11 @@ void HybridLiteRTLM::loadModelInternal(
 
 std::shared_ptr<Promise<std::string>> HybridLiteRTLM::sendMessage(const std::string& message) {
   return Promise<std::string>::async([this, message]() -> std::string {
-    return sendMessageInternal(message);
+    std::string result;
+    runOnLargeStack([&]() {
+      result = sendMessageInternal(message);
+    });
+    return result;
   });
 }
 
@@ -445,34 +490,42 @@ void HybridLiteRTLM::sendMessageAsync(
   auto onTokenCopy = onToken;
   auto messageCopy = message;
   
-  // Capture shared state safely
-  auto* ctx = new StreamContext();
-  ctx->onToken = std::move(onTokenCopy);
-  ctx->fullResponse = "";
-  ctx->history = &history_;
-  ctx->historyMutex = &mutex_;
-  ctx->userMessage = messageCopy;
-  ctx->lastStats = &lastStats_;
-  ctx->startTime = std::chrono::steady_clock::now();
-  ctx->tokenCount = 0;
+  // Capture shared state safely — use unique_ptr to prevent leaks
+  auto ctxOwner = std::make_unique<StreamContext>();
+  ctxOwner->onToken = std::move(onTokenCopy);
+  ctxOwner->fullResponse = "";
+  ctxOwner->history = &history_;
+  ctxOwner->historyMutex = &mutex_;
+  ctxOwner->userMessage = messageCopy;
+  ctxOwner->lastStats = &lastStats_;
+  ctxOwner->startTime = std::chrono::steady_clock::now();
+  ctxOwner->tokenCount = 0;
   
 #ifdef __APPLE__
   ensureLoaded();
   
   std::string msgJson = buildTextMessageJson(messageCopy);
   
-  int result = litert_lm_conversation_send_message_stream(
-    conversation_, msgJson.c_str(), nullptr,
-    streamCallbackFn, ctx);
+  // Release ownership — the C callback now owns the context via raw pointer.
+  // streamCallbackFn will delete it when done or on error.
+  StreamContext* ctx = ctxOwner.release();
   
-  if (result != 0) {
-    delete ctx;
-    throw std::runtime_error("LiteRT-LM: Failed to start streaming inference");
-  }
+  // Wrap the initial engine call in runOnLargeStack for consistency
+  // with all other engine entry points (XNNPack needs >512KB stack).
+  runOnLargeStack([&]() {
+    int result = litert_lm_conversation_send_message_stream(
+      conversation_, msgJson.c_str(), nullptr,
+      streamCallbackFn, ctx);
+    
+    if (result != 0) {
+      delete ctx;
+      throw std::runtime_error("LiteRT-LM: Failed to start streaming inference");
+    }
+  });
 #else
   // Non-Apple stub
-  ctx->onToken("[iOS only] Streaming not available on this platform.", true);
-  delete ctx;
+  ctxOwner->onToken("[iOS only] Streaming not available on this platform.", true);
+  // ctxOwner auto-deleted by unique_ptr
 #endif
 }
 
@@ -484,7 +537,11 @@ std::shared_ptr<Promise<std::string>> HybridLiteRTLM::sendMessageWithImage(
     const std::string& message,
     const std::string& imagePath) {
   return Promise<std::string>::async([this, message, imagePath]() -> std::string {
-    return sendMessageWithImageInternal(message, imagePath);
+    std::string result;
+    runOnLargeStack([&]() {
+      result = sendMessageWithImageInternal(message, imagePath);
+    });
+    return result;
   });
 }
 
@@ -547,7 +604,11 @@ std::shared_ptr<Promise<std::string>> HybridLiteRTLM::sendMessageWithAudio(
     const std::string& message,
     const std::string& audioPath) {
   return Promise<std::string>::async([this, message, audioPath]() -> std::string {
-    return sendMessageWithAudioInternal(message, audioPath);
+    std::string result;
+    runOnLargeStack([&]() {
+      result = sendMessageWithAudioInternal(message, audioPath);
+    });
+    return result;
   });
 }
 
@@ -607,16 +668,8 @@ std::shared_ptr<Promise<std::string>> HybridLiteRTLM::downloadModel(
 #ifdef __APPLE__
     return litert_lm::downloadModelFile(url, fileName, onProgress);
 #else
-    std::string destPath = "/tmp/" + fileName;
-    std::string curlCmd = "curl -L -o \"" + destPath + "\" \"" + url + "\"";
-    int result = system(curlCmd.c_str());
-    if (result != 0) {
-      throw std::runtime_error("Failed to download model from: " + url);
-    }
-    if (onProgress.has_value()) {
-      onProgress.value()(1.0);
-    }
-    return destPath;
+    // Non-Apple platforms: not supported from C++ (Android uses Kotlin)
+    throw std::runtime_error("Download not available on this platform. Use the Kotlin implementation.");
 #endif
   });
 }
@@ -688,8 +741,8 @@ GenerationStats HybridLiteRTLM::getStats() {
 // =============================================================================
 
 MemoryUsage HybridLiteRTLM::getMemoryUsage() {
-  double usedMemoryBytes = 0;
-  double totalMemoryBytes = 0;
+  double nativeHeapBytes = 0;
+  double residentBytes = 0;
   double availableBytes = 0;
   bool isLowMemory = false;
   
@@ -704,33 +757,26 @@ MemoryUsage HybridLiteRTLM::getMemoryUsage() {
                                &count);
   
   if (kr == KERN_SUCCESS) {
-    usedMemoryBytes = static_cast<double>(info.resident_size);
+    residentBytes = static_cast<double>(info.resident_size);
+    // On iOS, mach_task_basic_info doesn't separate heap from RSS.
+    // Use resident_size_max as a proxy for peak native allocation.
+    nativeHeapBytes = static_cast<double>(info.resident_size);
   }
   
-  // Get total physical memory
-  mach_port_t host_port = mach_host_self();
-  struct host_basic_info hostInfo;
-  mach_msg_type_number_t hostCount = HOST_BASIC_INFO_COUNT;
-  
-  kr = host_info(host_port, HOST_BASIC_INFO,
-                  (host_info_t)&hostInfo, &hostCount);
-  
-  if (kr == KERN_SUCCESS) {
-    totalMemoryBytes = static_cast<double>(hostInfo.max_mem);
-  }
-  
-  availableBytes = totalMemoryBytes - usedMemoryBytes;
-  if (availableBytes < 0) availableBytes = 0;
+  // Use os_proc_available_memory() (iOS 13+) for accurate Jetsam headroom.
+  // This reports how much memory the process can still allocate before
+  // the system kills it — far more accurate than total_physical - process_rss.
+  availableBytes = static_cast<double>(os_proc_available_memory());
   
   // Low memory threshold (~200MB available)
-  isLowMemory = (totalMemoryBytes > 0) && (availableBytes < 200.0 * 1024.0 * 1024.0);
+  isLowMemory = availableBytes < 200.0 * 1024.0 * 1024.0;
 #endif
   
   return MemoryUsage{
-    usedMemoryBytes,          // nativeHeapBytes
-    usedMemoryBytes,          // residentBytes  
-    availableBytes,           // availableMemoryBytes
-    isLowMemory               // isLowMemory
+    nativeHeapBytes,            // nativeHeapBytes (RSS as proxy on iOS)
+    residentBytes,              // residentBytes  
+    availableBytes,             // availableMemoryBytes
+    isLowMemory                 // isLowMemory
   };
 }
 

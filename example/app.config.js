@@ -6,7 +6,6 @@ module.exports = {
     orientation: "portrait",
     icon: "./assets/icon.png",
     userInterfaceStyle: "light",
-    newArchEnabled: true,
     splash: {
       image: "./assets/splash-icon.png",
       resizeMode: "contain",
@@ -21,7 +20,6 @@ module.exports = {
         foregroundImage: "./assets/adaptive-icon.png",
         backgroundColor: "#ffffff"
       },
-      edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: "com.hughchen.LLMTest"
     },
@@ -34,14 +32,15 @@ module.exports = {
         {
           android: {
             minSdkVersion: 26,
-            compileSdkVersion: 35,
-            targetSdkVersion: 35
+            compileSdkVersion: 36,
+            targetSdkVersion: 36
           },
           ios: {
             deploymentTarget: "15.1"
           }
         }
-      ]
+      ],
+      "react-native-litert-lm"
     ]
   }
 };

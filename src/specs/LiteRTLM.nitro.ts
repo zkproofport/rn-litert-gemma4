@@ -30,18 +30,18 @@ export interface LLMConfig {
 
   /**
    * Primary compute backend for text generation.
-   * - 'cpu': CPU inference (slower but always available)
-   * - 'gpu': GPU acceleration (fast, recommended)
+   * - 'cpu': CPU inference (safe default, always available)
+   * - 'gpu': GPU acceleration (fast, Metal on iOS, GPU delegate on Android)
    * - 'npu': NPU/Neural Engine (fastest on supported devices)
    *
-   * If not specified, defaults to 'gpu'.
+   * If not specified, defaults to 'cpu'.
    * If specified backend is unavailable, falls back automatically.
    *
    * @remarks
-   * Vision encoder is always set to GPU (required by Gemma 3n).
+   * Vision encoder is always set to GPU (required by Gemma models).
    * Audio encoder is always set to CPU (optimal for audio processing).
    *
-   * @default 'gpu'
+   * @default 'cpu'
    */
   backend?: Backend;
 
@@ -116,12 +116,12 @@ export interface MemoryUsage {
 
 /**
  * LiteRT-LM: High-performance LLM inference engine.
- * Supports Gemma 3n, Phi-4, Qwen, and other .litertlm models.
+ * Supports Gemma 4, Gemma 3n, Phi-4, Qwen, and other .litertlm models.
  *
  * @example
  * ```typescript
  * const llm = createLLM();
- * llm.loadModel('/path/to/gemma-3n.litertlm', { backend: 'gpu' });
+ * llm.loadModel('/path/to/gemma-4-E2B-it.litertlm', { backend: 'cpu' });
  *
  * // Blocking generation
  * const response = llm.sendMessage('What is the capital of France?');
