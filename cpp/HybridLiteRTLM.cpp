@@ -109,6 +109,34 @@ std::string HybridLiteRTLM::buildAudioMessageJson(const std::string& text, const
          "]}";
 }
 
+/**
+ * Strip Gemma / LiteRT-LM control tokens from model output.
+ * The iOS C API returns raw model text including stop/turn markers
+ * that the Android Kotlin SDK strips automatically.
+ */
+static std::string stripControlTokens(const std::string& text) {
+  static const char* tokens[] = {
+    "<end_of_turn>",
+    "<start_of_turn>model",
+    "<start_of_turn>user",
+    "<start_of_turn>",
+    "<eos>",
+  };
+  std::string result = text;
+  for (auto* tok : tokens) {
+    std::string t(tok);
+    size_t pos;
+    while ((pos = result.find(t)) != std::string::npos) {
+      result.erase(pos, t.length());
+    }
+  }
+  // Trim leading/trailing whitespace
+  size_t start = result.find_first_not_of(" \t\n\r");
+  if (start == std::string::npos) return "";
+  size_t end = result.find_last_not_of(" \t\n\r");
+  return result.substr(start, end - start + 1);
+}
+
 std::string HybridLiteRTLM::extractTextFromResponse(const std::string& jsonResponse) {
   // The C API response JSON is structured as:
   //   {"role":"model","content":[{"type":"text","text":"..."}]}
@@ -141,7 +169,7 @@ std::string HybridLiteRTLM::extractTextFromResponse(const std::string& jsonRespo
           result += jsonResponse[i];
         }
       }
-      return result;
+      return stripControlTokens(result);
     }
   }
   
@@ -164,11 +192,11 @@ std::string HybridLiteRTLM::extractTextFromResponse(const std::string& jsonRespo
         result += jsonResponse[i];
       }
     }
-    return result;
+    return stripControlTokens(result);
   }
   
-  // Fallback: return full response
-  return jsonResponse;
+  // Fallback: return full response (still strip control tokens)
+  return stripControlTokens(jsonResponse);
 }
 
 // =============================================================================
@@ -284,7 +312,7 @@ void HybridLiteRTLM::loadModelInternal(
       modelPath.c_str(),
       backend,
       visionBackend,
-      nullptr // audio executor not supported on iOS yet
+      "cpu" // audio executor: iOS XCFramework lacks compiled audio ops (INTERNAL ERROR at Invoke)
     );
     if (!settings) {
       return false;
@@ -476,9 +504,13 @@ void HybridLiteRTLM::streamCallbackFn(void* callback_data, const char* chunk,
   
   if (chunk) {
     std::string token(chunk);
-    ctx->fullResponse += token;
+    // Filter out Gemma control tokens from streamed chunks
+    std::string cleaned = stripControlTokens(token);
+    ctx->fullResponse += cleaned;
     ctx->tokenCount++;
-    ctx->onToken(token, false);
+    if (!cleaned.empty()) {
+      ctx->onToken(cleaned, false);
+    }
   }
 }
 
@@ -635,7 +667,12 @@ std::string HybridLiteRTLM::sendMessageWithAudioInternal(
     conversation_, msgJson.c_str(), nullptr);
   
   if (!response) {
-    throw std::runtime_error("LiteRT-LM: sendMessageWithAudio failed");
+    std::string errMsg = "LiteRT-LM: sendMessageWithAudio failed";
+    const char* nativeErr = litert_lm_get_last_error();
+    if (nativeErr && nativeErr[0] != '\0') {
+      errMsg += ": " + std::string(nativeErr);
+    }
+    throw std::runtime_error(errMsg);
   }
   
   const char* responseStr = litert_lm_json_response_get_string(response);

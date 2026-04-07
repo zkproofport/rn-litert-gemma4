@@ -163,7 +163,7 @@ export function checkBackendSupport(backend: Backend): string | undefined {
  */
 export function checkMultimodalSupport(): string | undefined {
   if (Platform.OS === "ios") {
-    return "Multimodal (image/audio) is experimental on iOS. Vision and audio executors may not be available in the current build.";
+    return "Multimodal (image/audio) is not available on iOS. The XCFramework lacks compiled vision and audio executor ops.";
   }
   return undefined;
 }

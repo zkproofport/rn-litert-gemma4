@@ -48,11 +48,23 @@ async function getTestImagePath(modelInstance?: any): Promise<string> {
   );
 }
 
-const TEST_AUDIO_PATH = Platform.select({
-  ios: "/tmp/test.wav", // Audio test not yet supported on iOS
-  android: "/data/local/tmp/test.wav",
-  default: "/tmp/test.wav",
-})!;
+const TEST_AUDIO_ASSET = require("./test.wav");
+
+async function getTestAudioPath(modelInstance?: any): Promise<string> {
+  if (Platform.OS === "android") {
+    return "/data/local/tmp/test.wav";
+  }
+  const source = Image.resolveAssetSource(TEST_AUDIO_ASSET);
+  if (source.uri.startsWith("file://")) {
+    return source.uri.replace("file://", "");
+  }
+  if (modelInstance?.downloadModel) {
+    return await modelInstance.downloadModel(source.uri, "test_audio.wav");
+  }
+  throw new Error(
+    "Cannot resolve test audio path in dev mode without model instance",
+  );
+}
 
 const THEME = {
   bg: "#050505",
@@ -91,7 +103,7 @@ export default function App() {
 function Main() {
   const [useGpu, setUseGpu] = useState(false);
   const [selectedModel, setSelectedModel] = useState<"gemma3n" | "gemma4">(
-    "gemma3n",
+    "gemma4",
   );
 
   const MODEL_OPTIONS = {
@@ -263,41 +275,48 @@ function Main() {
       // Test 11: Image (vision)
       // Vision executor needs ~2GB additional memory on top of the text model.
       // Skip if insufficient memory to avoid jetsam kills.
-      const memBeforeImage = model.getMemoryUsage();
-      const availGB =
-        memBeforeImage.availableMemoryBytes / (1024 * 1024 * 1024);
-      if (availGB < 4.0) {
-        log(
-          `Image skipped: only ${availGB.toFixed(1)} GB available (need ~4 GB for vision encoder)`,
-          "info",
-        );
+      // Also skip on iOS — XCFramework lacks compiled vision executor ops.
+      if (Platform.OS === "ios") {
+        log("Image skipped (iOS XCFramework lacks vision executor ops)", "info");
       } else {
-        try {
-          const imagePath = await getTestImagePath(model);
-          log(`Image path: ${imagePath}`);
-          const imgResp = await model.sendMessageWithImage(
-            "Describe this image in one sentence.",
-            imagePath,
+        const memBeforeImage = model.getMemoryUsage();
+        const availGB =
+          memBeforeImage.availableMemoryBytes / (1024 * 1024 * 1024);
+        if (availGB < 4.0) {
+          log(
+            `Image skipped: only ${availGB.toFixed(1)} GB available (need ~4 GB for vision encoder)`,
+            "info",
           );
-          log(`Image: "${imgResp}"`, "success");
-        } catch (e: any) {
-          log(`Image test: ${e.message}`, "error");
+        } else {
+          try {
+            const imagePath = await getTestImagePath(model);
+            log(`Image path: ${imagePath}`);
+            const imgResp = await model.sendMessageWithImage(
+              "Describe this image in one sentence.",
+              imagePath,
+            );
+            log(`Image: "${imgResp}"`, "success");
+          } catch (e: any) {
+            log(`Image test: ${e.message}`, "error");
+          }
         }
       }
 
-      // Test 12: Audio (not supported on iOS yet)
+      // Test 12: Audio (not yet supported on iOS — audio executor ops missing from XCFramework)
       if (Platform.OS !== "ios") {
         try {
+          const audioPath = await getTestAudioPath(model);
+          log(`Audio path: ${audioPath}`);
           const audioResp = await model.sendMessageWithAudio(
             "Transcribe this audio.",
-            TEST_AUDIO_PATH,
+            audioPath,
           );
           log(`Audio: "${audioResp}"`, "success");
         } catch (e: any) {
           log(`Audio test: ${e.message}`, "error");
         }
       } else {
-        log("Audio skipped (not supported on iOS)", "info");
+        log("Audio skipped (iOS XCFramework lacks audio executor ops)", "info");
       }
 
       log("All tests complete.", "success");
@@ -447,7 +466,9 @@ function Main() {
           ) : (
             <>
               <View style={styles.successBox}>
-                <Text style={styles.successText}>✓ {MODEL_OPTIONS[selectedModel].label} Ready</Text>
+                <Text style={styles.successText}>
+                  ✓ {MODEL_OPTIONS[selectedModel].label} Ready
+                </Text>
               </View>
               {error && (
                 <Text
@@ -485,9 +506,10 @@ function Main() {
                 style={[styles.secondaryButton, { borderColor: THEME.error }]}
                 onPress={async () => {
                   try {
-                    const fileName = selectedModel === "gemma4"
-                      ? "gemma-4-E2B-it.litertlm"
-                      : "gemma-3n-E2B-it-int4.litertlm";
+                    const fileName =
+                      selectedModel === "gemma4"
+                        ? "gemma-4-E2B-it.litertlm"
+                        : "gemma-3n-E2B-it-int4.litertlm";
                     await deleteModel(fileName);
                     log("Model deleted", "success");
                   } catch (e: any) {

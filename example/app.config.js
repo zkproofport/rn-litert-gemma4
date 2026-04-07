@@ -13,7 +13,11 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.hughchen.LLMTest"
+      bundleIdentifier: "com.hughchen.LLMTest",
+      entitlements: {
+        "com.apple.developer.kernel.increased-memory-limit": true,
+        "com.apple.developer.kernel.extended-virtual-addressing": true
+      }
     },
     android: {
       adaptiveIcon: {

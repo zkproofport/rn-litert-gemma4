@@ -108,6 +108,11 @@ export function useModel(
       maxMemorySnapshots,
     });
 
+    // Reset ready state — the new instance has no model loaded yet.
+    // This prevents stale isReady=true after Fast Refresh (which
+    // preserves useState but re-runs useEffect).
+    setIsReady(false);
+
     // Cleanup on unmount
     return () => {
       try {
