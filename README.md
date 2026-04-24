@@ -82,6 +82,8 @@ The `example/` directory contains a fully functional test app with a dark-themed
    npm install
    ```
 
+   > **Important:** Use `npm` (not `pnpm`) for the example app. The library is linked via `file:..`, and npm creates a symlink so the iOS XCFramework is visible to CocoaPods. pnpm copies files based on the `files` array and misses `ios/Frameworks/`.
+
 3. **Create a development build and run:**
 
    ```bash
@@ -452,7 +454,7 @@ const prompt = applyGemmaTemplate(
 | react-native-nitro-modules | 0.35.0+       |
 | Android API                | 26+ (ARM64)   |
 | iOS                        | 15.0+ (ARM64) |
-| LiteRT-LM Engine            | 0.10.1          |
+| LiteRT-LM Engine            | 0.10.2          |
 
 ## Platform Support
 
@@ -491,7 +493,7 @@ Add to your app's `.entitlements` file:
 
 ## Building the iOS Engine
 
-The iOS build uses a **Bazel-to-XCFramework pipeline** that compiles the LiteRT-LM C engine and all transitive dependencies into a static library (~83 MB).
+The iOS build uses a **Bazel-to-XCFramework pipeline** that compiles the LiteRT-LM C engine and all transitive dependencies into a static library (~82–84 MB).
 
 ### Prerequisites
 
@@ -506,12 +508,12 @@ The iOS build uses a **Bazel-to-XCFramework pipeline** that compiles the LiteRT-
 
 This will:
 
-1. Clone/checkout LiteRT-LM `v0.10.1` source into `.litert-lm-build/`
-2. Build `//c:engine` for `ios_arm64` and `ios_sim_arm64` via Bazel
-3. Collect all transitive `.o` files (engine, protobuf, re2, sentencepiece, etc.)
-4. Compile C/C++ stubs for unavailable Rust dependencies
-5. Patch `PromptTemplate` to use a simplified template engine (no Rust MinijinjaTemplate)
-6. Merge ~1,900 object files into a static library via `libtool`
+1. Clone/checkout LiteRT-LM `v0.10.2` source into `.litert-lm-build/`
+2. Apply `scripts/patches/ios-engine-fixes.patch` (PromptTemplate simplification, linker fixes)
+3. Build `//c:engine` for `ios_arm64` and `ios_sim_arm64` via Bazel
+4. Collect all transitive `.o` files (engine, protobuf, re2, sentencepiece, etc.)
+5. Compile C/C++ stubs for unavailable Rust dependencies
+6. Merge ~1,909 object files into a static library via `libtool`
 7. Package into `ios/Frameworks/LiteRTLM.xcframework`
 
 ### Output
@@ -520,10 +522,10 @@ This will:
 ios/Frameworks/LiteRTLM.xcframework/
 ├── Info.plist
 ├── ios-arm64/LiteRTLM.framework/              # Device
-│   ├── LiteRTLM                                # ~81 MB static library
+│   ├── LiteRTLM                                # ~82 MB static library
 │   └── Headers/litert_lm_engine.h
 └── ios-arm64-simulator/LiteRTLM.framework/    # Simulator
-    ├── LiteRTLM                                # ~83 MB static library
+    ├── LiteRTLM                                # ~84 MB static library
     └── Headers/litert_lm_engine.h
 ```
 

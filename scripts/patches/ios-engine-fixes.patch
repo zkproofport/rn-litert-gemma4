@@ -1,22 +1,8 @@
 diff --git a/c/engine.cc b/c/engine.cc
-index 60ebd3f..5828db7 100644
+index d36b2a9..c132486 100644
 --- a/c/engine.cc
 +++ b/c/engine.cc
-@@ -40,6 +40,13 @@
- #include "runtime/executor/llm_executor_settings.h"
- #include "runtime/proto/sampler_params.pb.h"
- 
-+// Thread-local storage for the last error message from C API calls.
-+static thread_local std::string g_last_error;
-+
-+const char* litert_lm_get_last_error() {
-+  return g_last_error.c_str();
-+}
-+
- namespace {
- 
- absl::AnyInvocable<void(absl::StatusOr<litert::lm::Responses>)> CreateCallback(
-@@ -408,16 +415,23 @@ void litert_lm_engine_settings_set_prefill_chunk_size(
+@@ -409,14 +409,18 @@ void litert_lm_engine_settings_set_prefill_chunk_size(
    }
  }
  
@@ -25,10 +11,8 @@ index 60ebd3f..5828db7 100644
  LiteRtLmEngine* litert_lm_engine_create(
      const LiteRtLmEngineSettings* settings) {
 +  ForceLinkEngineImpl();
-+  g_last_error.clear();
 +  
    if (!settings || !settings->settings) {
-+    g_last_error = "Engine settings is null";
      return nullptr;
    }
  
@@ -37,46 +21,12 @@ index 60ebd3f..5828db7 100644
 +  engine = EngineFactory::CreateDefault(*settings->settings);
  
    if (!engine.ok()) {
-+    g_last_error = engine.status().ToString();
      ABSL_LOG(ERROR) << "Failed to create engine: " << engine.status();
-     return nullptr;
-   }
-@@ -693,13 +707,16 @@ void litert_lm_conversation_delete(LiteRtLmConversation* conversation) {
- LiteRtLmJsonResponse* litert_lm_conversation_send_message(
-     LiteRtLmConversation* conversation, const char* message_json,
-     const char* extra_context) {
-+  g_last_error.clear();
-   if (!conversation || !conversation->conversation) {
-+    g_last_error = "Conversation is null";
-     return nullptr;
-   }
-   nlohmann::json json_message =
-       nlohmann::json::parse(message_json, /*cb=*/nullptr,
-                             /*allow_exceptions=*/false);
-   if (json_message.is_discarded()) {
-+    g_last_error = "Failed to parse message JSON: " + std::string(message_json);
-     ABSL_LOG(ERROR) << "Failed to parse message JSON.";
-     return nullptr;
-   }
-@@ -709,11 +726,13 @@ LiteRtLmJsonResponse* litert_lm_conversation_send_message(
-   auto response = conversation->conversation->SendMessage(
-       json_message, std::move(optional_args));
-   if (!response.ok()) {
-+    g_last_error = "SendMessage failed: " + response.status().ToString();
-     ABSL_LOG(ERROR) << "Failed to send message: " << response.status();
-     return nullptr;
-   }
-   auto* json_response = std::get_if<JsonMessage>(&*response);
-   if (!json_response) {
-+    g_last_error = "Response is not a JSON message";
-     ABSL_LOG(ERROR) << "Response is not a JSON message.";
-     return nullptr;
-   }
 diff --git a/c/engine.h b/c/engine.h
-index 6bfbe7b..bcfa7f8 100644
+index 108751d..0e98f2b 100644
 --- a/c/engine.h
 +++ b/c/engine.h
-@@ -232,11 +232,18 @@ LITERT_LM_C_API_EXPORT
+@@ -241,6 +241,11 @@ LITERT_LM_C_API_EXPORT
  void litert_lm_engine_settings_set_num_decode_tokens(
      LiteRtLmEngineSettings* settings, int num_decode_tokens);
  
@@ -84,17 +34,10 @@ index 6bfbe7b..bcfa7f8 100644
 +// Returns an empty string if no error has occurred.
 +// The returned pointer is valid until the next C API call on the same thread.
 +LITERT_LM_C_API_EXPORT
-+const char* litert_lm_get_last_error();
 +
  // Creates a LiteRT LM Engine from the given settings. The caller is responsible
  // for destroying the engine using `litert_lm_engine_delete`.
  //
- // @param settings The engine settings.
- // @return A pointer to the created engine, or NULL on failure.
-+//         Call litert_lm_get_last_error() for details on failure.
- LITERT_LM_C_API_EXPORT
- LiteRtLmEngine* litert_lm_engine_create(const LiteRtLmEngineSettings* settings);
- 
 diff --git a/runtime/components/prompt_template.cc b/runtime/components/prompt_template.cc
 index 9e7246d..020e9c8 100644
 --- a/runtime/components/prompt_template.cc
@@ -301,10 +244,10 @@ index ea17f68..96d2888 100644
    // The capabilities of the prompt template. Auto inferred from the template
    // source string.
 diff --git a/runtime/core/engine_impl.cc b/runtime/core/engine_impl.cc
-index fa2bdff..e180b2b 100644
+index 710d241..0edd3f7 100644
 --- a/runtime/core/engine_impl.cc
 +++ b/runtime/core/engine_impl.cc
-@@ -397,11 +397,22 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineImpl::Create(
+@@ -411,11 +411,22 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineImpl::Create(
    return llm_impl;
  };
  

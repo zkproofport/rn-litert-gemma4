@@ -366,12 +366,7 @@ void HybridLiteRTLM::loadModelInternal(
     } else {
       diag += ", Readable: NO (errno: " + std::to_string(errno) + ")";
     }
-    
-    // Get the native error from the C API
-    const char* nativeErr = litert_lm_get_last_error();
-    if (nativeErr && nativeErr[0] != '\0') {
-      diag += " | Native error: " + std::string(nativeErr);
-    }
+
 
     throw std::runtime_error(
       "Failed to create LiteRT-LM engine. Tried backend '" +
@@ -602,12 +597,7 @@ std::string HybridLiteRTLM::sendMessageWithImageInternal(
     conversation_, msgJson.c_str(), nullptr);
   
   if (!response) {
-    std::string errMsg = "LiteRT-LM: sendMessageWithImage failed";
-    const char* nativeErr = litert_lm_get_last_error();
-    if (nativeErr && nativeErr[0] != '\0') {
-      errMsg += ": " + std::string(nativeErr);
-    }
-    throw std::runtime_error(errMsg);
+    throw std::runtime_error("LiteRT-LM: sendMessageWithImage failed");
   }
   
   const char* responseStr = litert_lm_json_response_get_string(response);
@@ -667,12 +657,7 @@ std::string HybridLiteRTLM::sendMessageWithAudioInternal(
     conversation_, msgJson.c_str(), nullptr);
   
   if (!response) {
-    std::string errMsg = "LiteRT-LM: sendMessageWithAudio failed";
-    const char* nativeErr = litert_lm_get_last_error();
-    if (nativeErr && nativeErr[0] != '\0') {
-      errMsg += ": " + std::string(nativeErr);
-    }
-    throw std::runtime_error(errMsg);
+    throw std::runtime_error("LiteRT-LM: sendMessageWithAudio failed");
   }
   
   const char* responseStr = litert_lm_json_response_get_string(response);

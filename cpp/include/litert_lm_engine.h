@@ -182,6 +182,15 @@ LITERT_LM_C_API_EXPORT
 void litert_lm_engine_settings_set_max_num_tokens(
     LiteRtLmEngineSettings* settings, int max_num_tokens);
 
+// Sets whether the engine should load different sections of the litertlm file
+// in parallel. Defaults to true.
+//
+// @param settings The engine settings.
+// @param parallel_file_section_loading Whether to load in parallel.
+LITERT_LM_C_API_EXPORT
+void litert_lm_engine_settings_set_parallel_file_section_loading(
+    LiteRtLmEngineSettings* settings, bool parallel_file_section_loading);
+
 // Sets the cache directory for the engine.
 //
 // @param settings The engine settings.
@@ -236,14 +245,12 @@ void litert_lm_engine_settings_set_num_decode_tokens(
 // Returns an empty string if no error has occurred.
 // The returned pointer is valid until the next C API call on the same thread.
 LITERT_LM_C_API_EXPORT
-const char* litert_lm_get_last_error();
 
 // Creates a LiteRT LM Engine from the given settings. The caller is responsible
 // for destroying the engine using `litert_lm_engine_delete`.
 //
 // @param settings The engine settings.
 // @return A pointer to the created engine, or NULL on failure.
-//         Call litert_lm_get_last_error() for details on failure.
 LITERT_LM_C_API_EXPORT
 LiteRtLmEngine* litert_lm_engine_create(const LiteRtLmEngineSettings* settings);
 

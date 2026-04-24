@@ -171,27 +171,40 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
                         else -> com.google.ai.edge.litertlm.Backend.CPU()
                     }
                     
-                    // Vision backend: hardcoded to GPU (required by Gemma models)
-                    val lmVisionBackend = com.google.ai.edge.litertlm.Backend.GPU()
-                        
-                    // Audio backend: hardcoded to CPU (optimal for audio processing)
-                    val lmAudioBackend = com.google.ai.edge.litertlm.Backend.CPU()
+                    // Detect multimodal support from model filename.
+                    // Only Gemma 3n bundles vision/audio executors; Gemma 4 E2B is text-only.
+                    // Passing vision/audio backends to a text-only model causes
+                    // vision_litert_compiled_model_executor init failures.
+                    val modelFileName = modelPath.substringAfterLast("/").lowercase()
+                    val isMultimodal = modelFileName.contains("3n") || modelFileName.contains("gemma3")
     
-                    Log.i(TAG, "Backend config: main=$lmBackend, vision=$lmVisionBackend (hardcoded), audio=$lmAudioBackend (hardcoded)")
+                    val lmVisionBackend = if (isMultimodal) com.google.ai.edge.litertlm.Backend.GPU() else null
+                    val lmAudioBackend = if (isMultimodal) com.google.ai.edge.litertlm.Backend.CPU() else null
+    
+                    Log.i(TAG, "Backend config: main=$lmBackend, vision=$lmVisionBackend, audio=$lmAudioBackend, multimodal=$isMultimodal")
     
                     // Get cache directory from application context
                     val cacheDirectory = LiteRTLMInitProvider.applicationContext?.cacheDir?.absolutePath
                     Log.i(TAG, "Using cache directory: $cacheDirectory")
     
-                    // Create Engine configuration
-                    val engineConfig = EngineConfig(
-                        modelPath = modelPath,
-                        backend = lmBackend,
-                        visionBackend = lmVisionBackend,
-                        audioBackend = lmAudioBackend,
-                        maxNumTokens = maxTokens,
-                        cacheDir = cacheDirectory
-                    )
+                    // Create Engine configuration — visionBackend/audioBackend are optional
+                    val engineConfig = if (isMultimodal) {
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = lmBackend,
+                            visionBackend = lmVisionBackend!!,
+                            audioBackend = lmAudioBackend!!,
+                            maxNumTokens = maxTokens,
+                            cacheDir = cacheDirectory
+                        )
+                    } else {
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = lmBackend,
+                            maxNumTokens = maxTokens,
+                            cacheDir = cacheDirectory
+                        )
+                    }
     
                     if (isClosed) return@synchronized
                     
@@ -615,7 +628,19 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
 
     private fun createNewConversation() {
         ensureLoaded()
-        // Dispose old conversation if needed
+        // v0.10.2 enforces single-session: close existing conversation first
+        conversation?.let { oldConv ->
+            try {
+                if (oldConv is AutoCloseable) {
+                    oldConv.close()
+                } else {
+                    oldConv.javaClass.getMethod("close").invoke(oldConv)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to close old conversation: ${e.message}")
+            }
+            conversation = null
+        }
         conversation = engine!!.createConversation()
         // Apply system prompt/instruction if set
         systemPrompt?.let { prompt ->
