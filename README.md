@@ -82,8 +82,6 @@ The `example/` directory contains a fully functional test app with a dark-themed
    npm install
    ```
 
-   > **Important:** Use `npm` (not `pnpm`) for the example app. The library is linked via `file:..`, and npm creates a symlink so the iOS XCFramework is visible to CocoaPods. pnpm copies files based on the `files` array and misses `ios/Frameworks/`.
-
 3. **Create a development build and run:**
 
    ```bash
@@ -311,11 +309,11 @@ const buffer = tracker.getNativeBuffer();
 
 Download `.litertlm` models automatically using the exported URL constants, or manually from [HuggingFace](https://huggingface.co/litert-community):
 
-| Constant               | Model                              | Size     | Min RAM | Auth Required |
-| :--------------------- | :--------------------------------- | :------- | :------ | :------------ |
-| `GEMMA_4_E2B_IT`       | Gemma 4 E2B (Multimodal, IT)       | 2.58 GB  | 4 GB+   | ❌ No          |
-| `GEMMA_4_E4B_IT`       | Gemma 4 E4B (Higher Quality)       | 3.65 GB  | 6 GB+   | ❌ No          |
-| `GEMMA_3N_E2B_IT_INT4` | Gemma 3n E2B (Int4, Multimodal)    | ~1.3 GB  | 4 GB+   | ✅ HuggingFace |
+| Constant               | Model                           | Size    | Min RAM | Auth Required  |
+| :--------------------- | :------------------------------ | :------ | :------ | :------------- |
+| `GEMMA_4_E2B_IT`       | Gemma 4 E2B (Multimodal, IT)    | 2.58 GB | 4 GB+   | ❌ No          |
+| `GEMMA_4_E4B_IT`       | Gemma 4 E4B (Higher Quality)    | 3.65 GB | 6 GB+   | ❌ No          |
+| `GEMMA_3N_E2B_IT_INT4` | Gemma 3n E2B (Int4, Multimodal) | ~1.3 GB | 4 GB+   | ✅ HuggingFace |
 
 > **Recommended:** Use `GEMMA_4_E2B_IT` for most use cases. It's multimodal (text + vision + audio) and downloads directly from HuggingFace without requiring an account.
 >
@@ -454,7 +452,7 @@ const prompt = applyGemmaTemplate(
 | react-native-nitro-modules | 0.35.0+       |
 | Android API                | 26+ (ARM64)   |
 | iOS                        | 15.0+ (ARM64) |
-| LiteRT-LM Engine            | 0.10.2          |
+| LiteRT-LM Engine           | 0.10.2        |
 
 ## Platform Support
 
