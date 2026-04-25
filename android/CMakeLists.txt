@@ -19,7 +19,7 @@ add_library(
 # loads the NitroModules shared library. This is required because we're
 # building a library that depends on NitroModules symbols which are only
 # available at runtime.
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-shlib-undefined")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-shlib-undefined,-z,max-page-size=16384")
 
 # Include Nitrogen autolinking - this adds all generated sources and links
 include(${CMAKE_SOURCE_DIR}/../nitrogen/generated/android/LiteRTLM+autolinking.cmake)
