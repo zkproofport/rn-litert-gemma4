@@ -103,13 +103,20 @@ async function main() {
 
     log('iOS frameworks installed successfully.');
   } catch (err) {
-    // Don't fail the install — iOS frameworks are optional (Android-only users)
-    log(`Warning: Could not download iOS frameworks: ${err.message}`);
-    log('iOS builds will not work until frameworks are available.');
-    log('Run: scripts/download-ios-frameworks.sh to download manually.');
-
     // Cleanup partial download
     try { fs.unlinkSync(tmpZip); } catch {}
+
+    log(`Error: Could not download iOS frameworks: ${err.message}`);
+    log('iOS builds will not work until frameworks are available.');
+    log('Run: ./scripts/download-ios-frameworks.sh to download manually,');
+    log('  or: ./scripts/build-ios-engine.sh to build from source.');
+
+    // Fail fast on macOS so users discover the problem now, not at Xcode link time.
+    // Skip SKIP_IOS_FRAMEWORK_DOWNLOAD is already checked above.
+    if (process.platform === 'darwin') {
+      log('Set SKIP_IOS_FRAMEWORK_DOWNLOAD=1 to suppress this error (e.g. Android-only builds).');
+      process.exit(1);
+    }
   }
 }
 
