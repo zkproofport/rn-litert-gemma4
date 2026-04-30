@@ -13,10 +13,11 @@
   },
   "description": "React Native bindings for LiteRT-LM, opinionated for Gemma 4 with native multimodal + structured tool calling.",
   "license": "MIT",
-  "originalAuthor": "Hugh Chen (https://github.com/hung-yueh) — react-native-litert-lm",
+  "author": "ZKProofport (forked from Hugh Chen's react-native-litert-lm)",
+  "originalAuthor": "Hugh Chen (https://github.com/hung-yueh)",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/zkproofport/rn-litert-gemma4.git"
+    "url": "https://github.com/zkproofport/rn-litert-gemma4.git"
   },
   "homepage": "https://github.com/zkproofport/rn-litert-gemma4#readme",
   "bugs": {
