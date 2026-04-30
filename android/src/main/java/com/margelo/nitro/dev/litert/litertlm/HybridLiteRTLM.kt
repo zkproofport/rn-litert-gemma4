@@ -225,6 +225,22 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
     }
 
     // -------------------------------------------------------------------------
+    // setTools - Replace the active tool list (Android: not yet implemented).
+    //
+    // The Android Kotlin path predates Gemma 4 native function calling; the
+    // iOS C++ path implements it via litert_lm_conversation_config_create.
+    // Android implementation is tracked in TODO.md.
+    // -------------------------------------------------------------------------
+    override fun setTools(toolsJson: String): Promise<Unit> {
+        return Promise.parallel {
+            throw RuntimeException(
+                "setTools is not yet implemented on Android. " +
+                "Use the iOS path or pass tools via loadModel config (also unimplemented on Android)."
+            )
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // sendMessage - Helper for one-shot generation (internally uses Async)
     // -------------------------------------------------------------------------
     override fun sendMessage(message: String): Promise<String> {

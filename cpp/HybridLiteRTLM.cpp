@@ -227,14 +227,20 @@ void HybridLiteRTLM::createNewConversation() {
     systemMsgPtr = systemMsgJson.c_str();
   }
   
-  // Create conversation config with session config
+  // Create conversation config with session config + Gemma 4 tools.
+  // When toolsJson_ is non-empty, the engine will inject the proper
+  // <|tool>declaration:NAME{...}<tool|> block into the chat template, and the
+  // model will emit <|tool_call>call:NAME{...}<tool_call|> when it decides to
+  // call a tool. Constrained decoding (when enabled) forces well-formed tool
+  // calls at the token level — no JS-side regex parsing of arbitrary text.
+  const char* toolsPtr = toolsJson_.empty() ? nullptr : toolsJson_.c_str();
   conv_config_ = litert_lm_conversation_config_create(
     engine_,
-    session_config_,  // may be nullptr for defaults
-    systemMsgPtr,     // system message
-    nullptr,          // tools (not used yet)
-    nullptr,          // messages history
-    false             // constrained decoding
+    session_config_,
+    systemMsgPtr,
+    toolsPtr,
+    nullptr,
+    enableConstrainedDecoding_
   );
   if (!conv_config_) {
     throw std::runtime_error("Failed to create conversation config");
@@ -248,6 +254,22 @@ void HybridLiteRTLM::createNewConversation() {
     throw std::runtime_error("Failed to create conversation");
   }
 #endif
+}
+
+// =============================================================================
+// setTools — Replace the active tool list without reloading the model.
+// =============================================================================
+
+std::shared_ptr<Promise<void>> HybridLiteRTLM::setTools(const std::string& toolsJson) {
+  return Promise<void>::async([this, toolsJson]() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ensureLoaded();
+    toolsJson_ = toolsJson;
+    // Default constrained decoding ON when tools is set.
+    enableConstrainedDecoding_ = !toolsJson_.empty();
+    history_.clear();
+    createNewConversation();
+  });
 }
 
 // =============================================================================
@@ -293,6 +315,15 @@ void HybridLiteRTLM::loadModelInternal(
     if (config->systemPrompt.has_value()) {
       systemPrompt_ = config->systemPrompt.value();
     }
+    if (config->tools.has_value()) {
+      toolsJson_ = config->tools.value();
+    }
+    if (config->enableConstrainedDecoding.has_value()) {
+      enableConstrainedDecoding_ = config->enableConstrainedDecoding.value();
+    } else {
+      // Default: ON when tools is non-empty, OFF otherwise.
+      enableConstrainedDecoding_ = !toolsJson_.empty();
+    }
   }
   
 #ifdef __APPLE__
@@ -318,7 +349,9 @@ void HybridLiteRTLM::loadModelInternal(
       return false;
     }
     
-    litert_lm_engine_settings_set_max_num_tokens(settings, static_cast<int>(maxTokens_));
+    // contextWindow_ is the total token budget (input + output);
+    // maxTokens_ is enforced per-session via session_config below.
+    litert_lm_engine_settings_set_max_num_tokens(settings, static_cast<int>(contextWindow_));
     litert_lm_engine_settings_enable_benchmark(settings);
     
     // Set cache directory to the same directory as the model file

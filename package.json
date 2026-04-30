@@ -7,6 +7,10 @@
     "androidMavenVersion": "0.10.2",
     "iosGitTag": "v0.10.2"
   },
+  "upstreamWrapper": {
+    "name": "react-native-litert-lm",
+    "releaseTag": "v0.3.6"
+  },
   "description": "React Native bindings for LiteRT-LM, opinionated for Gemma 4 with native multimodal + structured tool calling.",
   "license": "MIT",
   "originalAuthor": "Hugh Chen (https://github.com/hung-yueh) — react-native-litert-lm",

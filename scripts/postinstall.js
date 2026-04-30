@@ -17,7 +17,13 @@ const path = require('path');
 const https = require('https');
 
 const PACKAGE_JSON = require('../package.json');
-const PACKAGE_VERSION = PACKAGE_JSON.version;
+// We pull the prebuilt iOS XCFramework from the upstream
+// `react-native-litert-lm` releases. Our package.json version is the fork's
+// own version and bears no relation to the upstream release tag, so the
+// upstream release tag is configured separately under `upstreamWrapper`.
+const UPSTREAM_RELEASE_TAG =
+  (PACKAGE_JSON.upstreamWrapper && PACKAGE_JSON.upstreamWrapper.releaseTag) ||
+  'v0.3.6';
 const GITHUB_REPO = 'hung-yueh/react-native-litert-lm';
 const ASSET_NAME = 'LiteRTLM-ios-frameworks.zip';
 
@@ -85,7 +91,7 @@ function downloadFile(url, destPath, maxRedirects = 5) {
 async function main() {
   if (shouldSkip()) return;
 
-  const releaseUrl = `https://github.com/${GITHUB_REPO}/releases/download/v${PACKAGE_VERSION}/${ASSET_NAME}`;
+  const releaseUrl = `https://github.com/${GITHUB_REPO}/releases/download/${UPSTREAM_RELEASE_TAG}/${ASSET_NAME}`;
 
   log(`Downloading iOS frameworks from: ${releaseUrl}`);
 

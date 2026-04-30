@@ -54,9 +54,13 @@ Pod::Spec.new do |s|
   s.dependency 'React-callinvoker'
   s.dependency 'ReactCommon/turbomodule/core'
 
-  # Apple frameworks needed by LiteRT-LM engine
-  # Metal/MPS: GPU inference, Accelerate: BLAS/LAPACK, CoreML: delegate
-  s.frameworks = ['Metal', 'MetalPerformanceShaders', 'Accelerate', 'CoreML', 'CoreGraphics']
+  # Apple frameworks needed by LiteRT-LM engine.
+  # Metal/MPS: GPU inference, Accelerate: BLAS/LAPACK, CoreML: delegate,
+  # AVFoundation: required by miniaudio (audio session routing/interruption
+  # handlers compiled into the LiteRTLM XCFramework). Without this, apps
+  # that don't already pull AVFoundation in (e.g. via Firebase) fail at link
+  # time with `Undefined symbols: _AVAudioSession*`.
+  s.frameworks = ['Metal', 'MetalPerformanceShaders', 'Accelerate', 'CoreML', 'CoreGraphics', 'AVFoundation']
   s.libraries = ['c++']
 
   install_modules_dependencies(s)

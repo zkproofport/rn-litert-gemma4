@@ -37,10 +37,6 @@ export interface LLMConfig {
    * If not specified, defaults to 'cpu'.
    * If specified backend is unavailable, falls back automatically.
    *
-   * @remarks
-   * Vision encoder is always set to GPU (required by Gemma models).
-   * Audio encoder is always set to CPU (optimal for audio processing).
-   *
    * @default 'cpu'
    */
   backend?: Backend;
@@ -68,6 +64,40 @@ export interface LLMConfig {
    * @default 0.95
    */
   topP?: number;
+
+  /**
+   * Tool definitions in Gemma 4-compatible JSON array format.
+   *
+   * When set, the LiteRT-LM engine builds the proper
+   * `<|tool>declaration:NAME{...}<tool|>` block in the chat template and the
+   * model emits `<|tool_call>call:NAME{...}<tool_call|>` when it decides to
+   * call a tool. With `enableConstrainedDecoding: true` (the default when
+   * `tools` is set), the engine forces well-formed tool calls at the token
+   * level — no regex parsing needed.
+   *
+   * Example:
+   * ```json
+   * [
+   *   {
+   *     "name": "get_weather",
+   *     "description": "Get current temperature for a city",
+   *     "parameters": {
+   *       "type": "object",
+   *       "properties": { "city": { "type": "string" } },
+   *       "required": ["city"]
+   *     }
+   *   }
+   * ]
+   * ```
+   */
+  tools?: string;
+
+  /**
+   * Force the model to emit only well-formed tool calls / tool responses
+   * via constrained decoding at the token level. Defaults to `true` when
+   * `tools` is non-empty, `false` otherwise.
+   */
+  enableConstrainedDecoding?: boolean;
 }
 
 /**
@@ -104,7 +134,7 @@ export interface GenerationStats {
  * Measured from OS-level APIs, not estimated.
  */
 export interface MemoryUsage {
-  /** Native heap allocated bytes (Debug.getNativeHeapAllocatedSize on Android, malloc_size on iOS) */
+  /** Native heap allocated bytes */
   nativeHeapBytes: number;
   /** Total process resident set size (RSS) in bytes */
   residentBytes: number;
@@ -115,22 +145,16 @@ export interface MemoryUsage {
 }
 
 /**
- * LiteRT-LM: High-performance LLM inference engine.
- * Supports Gemma 4, Gemma 3n, Phi-4, Qwen, and other .litertlm models.
+ * LiteRT-LM: High-performance Gemma 4 inference engine.
  *
  * @example
  * ```typescript
  * const llm = createLLM();
- * llm.loadModel('/path/to/gemma-4-E2B-it.litertlm', { backend: 'cpu' });
- *
- * // Blocking generation
- * const response = llm.sendMessage('What is the capital of France?');
- *
- * // Streaming generation
- * llm.sendMessageAsync('Tell me a story', (token, done) => {
- *   process.stdout.write(token);
+ * await llm.loadModel('/path/to/gemma-4-E2B-it.litertlm', {
+ *   backend: 'gpu',
+ *   tools: JSON.stringify([{ name: 'get_weather', ... }]),
  * });
- *
+ * const text = await llm.sendMessage('weather in Seoul?');
  * llm.close();
  * ```
  */
@@ -140,32 +164,34 @@ export interface LiteRTLM extends HybridObject<{
 }> {
   /**
    * Load a .litertlm model file.
-   * @param config Optional configuration for backend and sampling.
-   * @throws Error if the model cannot be loaded.
+   * @param config Optional configuration for backend, sampling, and tools.
    */
   loadModel(modelPath: string, config?: LLMConfig): Promise<void>;
 
   /**
+   * Replace the active tools list without reloading the model.
+   * Pass an empty string to clear tools.
+   *
+   * Internally calls `litert_lm_conversation_config_create` with the new
+   * tools JSON; constrained decoding is auto-enabled when tools is non-empty.
+   */
+  setTools(toolsJson: string): Promise<void>;
+
+  /**
    * Send a text message and get the complete response (blocking).
-   * @param message User message text.
-   * @returns The model's response text.
+   * @returns Raw model output. With `tools` set, this includes Gemma 4's
+   * native `<|tool_call>...<tool_call|>` tokens — use the `parseGemma4ToolCall`
+   * helper from this package's JS layer to extract a structured ToolCall.
    */
   sendMessage(message: string): Promise<string>;
 
   /**
    * Send a text message with an image (multimodal).
-   * @param message User message text.
-   * @param imagePath Absolute path to an image file.
-   * @returns The model's response text.
    */
   sendMessageWithImage(message: string, imagePath: string): Promise<string>;
 
   /**
    * Download a model file from a URL.
-   * @param url URL to download from.
-   * @param fileName Filename to save as (in app's files directory).
-   * @param onProgress Callback for download progress (0.0 - 1.0).
-   * @returns Absolute path to the downloaded file.
    */
   downloadModel(
     url: string,
@@ -175,23 +201,16 @@ export interface LiteRTLM extends HybridObject<{
 
   /**
    * Delete a downloaded model file.
-   * @param fileName Filename to delete (in app's files directory).
    */
   deleteModel(fileName: string): Promise<void>;
 
   /**
    * Send a text message with audio (multimodal).
-   * @param message User message text.
-   * @param audioPath Absolute path to an audio file (WAV).
-   * @returns The model's response text.
    */
   sendMessageWithAudio(message: string, audioPath: string): Promise<string>;
 
   /**
    * Send a message with streaming response.
-   * Tokens are delivered via callback as they are generated.
-   * @param message User message text.
-   * @param onToken Callback invoked for each token (token, isDone).
    */
   sendMessageAsync(
     message: string,
@@ -200,12 +219,11 @@ export interface LiteRTLM extends HybridObject<{
 
   /**
    * Get the current conversation history.
-   * @returns Array of messages in the conversation.
    */
   getHistory(): Message[];
 
   /**
-   * Clear the conversation context and start fresh.
+   * Clear the conversation context and start fresh. Tools are preserved.
    */
   resetConversation(): void;
 
@@ -221,13 +239,11 @@ export interface LiteRTLM extends HybridObject<{
 
   /**
    * Get real memory usage from the native runtime.
-   * Uses OS-level APIs to report actual memory consumption.
    */
   getMemoryUsage(): MemoryUsage;
 
   /**
    * Release all native resources.
-   * Call this when done with the LLM instance.
    */
   close(): void;
 }

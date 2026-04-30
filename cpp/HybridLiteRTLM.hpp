@@ -60,9 +60,11 @@ public:
 public:
   // HybridLiteRTLMSpec interface implementation
   
-  std::shared_ptr<Promise<void>> loadModel(const std::string& modelPath, 
+  std::shared_ptr<Promise<void>> loadModel(const std::string& modelPath,
                  const std::optional<LLMConfig>& config) override;
-  
+
+  std::shared_ptr<Promise<void>> setTools(const std::string& toolsJson) override;
+
   std::shared_ptr<Promise<std::string>> sendMessage(const std::string& message) override;
   
   std::shared_ptr<Promise<std::string>> sendMessageWithImage(const std::string& message,
@@ -116,13 +118,24 @@ private:
   
   // System prompt / instruction
   std::string systemPrompt_;
-  
+
+  // Tool definitions (Gemma 4 native function calling). Empty = no tools.
+  std::string toolsJson_;
+
+  // Force well-formed tool calls at the token level. Default true when
+  // toolsJson_ is non-empty, false otherwise.
+  bool enableConstrainedDecoding_ = false;
+
   // Configuration - sampling parameters
   double temperature_ = 0.7;
   double topK_ = 40.0;
   double topP_ = 0.95;
   double maxTokens_ = 1024.0;
-  
+
+  // Total engine token budget (input + output). Set from LLMConfig.contextWindow,
+  // not exposed in JS yet — kept patched at 16384 to fit long tool-laden prompts.
+  size_t contextWindow_ = 16384;
+
   // Helper to ensure model is loaded
   void ensureLoaded() const {
     if (!isLoaded_) {
