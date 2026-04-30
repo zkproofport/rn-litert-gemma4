@@ -1,21 +1,22 @@
 {
-  "name": "react-native-litert-lm",
-  "version": "0.3.6",
+  "name": "@zkproofport/rn-litert-gemma4",
+  "version": "0.1.0",
+  "private": true,
   "litertLm": {
     "version": "0.10.2",
     "androidMavenVersion": "0.10.2",
     "iosGitTag": "v0.10.2"
   },
-  "description": "High-performance LLM inference for React Native using LiteRT-LM. Optimized for Gemma 4 and other on-device language models.",
+  "description": "React Native bindings for LiteRT-LM, opinionated for Gemma 4 with native multimodal + structured tool calling.",
   "license": "MIT",
-  "author": "Hugh Chen (https://github.com/hung-yueh)",
+  "originalAuthor": "Hugh Chen (https://github.com/hung-yueh) — react-native-litert-lm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hung-yueh/react-native-litert-lm.git"
+    "url": "git+ssh://git@github.com/zkproofport/rn-litert-gemma4.git"
   },
-  "homepage": "https://github.com/hung-yueh/react-native-litert-lm#readme",
+  "homepage": "https://github.com/zkproofport/rn-litert-gemma4#readme",
   "bugs": {
-    "url": "https://github.com/hung-yueh/react-native-litert-lm/issues"
+    "url": "https://github.com/zkproofport/rn-litert-gemma4/issues"
   },
   "keywords": [
     "react-native",
@@ -25,12 +26,14 @@
     "llm",
     "gemma",
     "gemma-4",
-    "gemma-3n",
-    "ai",
-    "machine-learning",
+    "function-calling",
+    "tool-use",
+    "constrained-decoding",
+    "multimodal",
+    "vision",
+    "audio",
     "on-device",
-    "inference",
-    "expo"
+    "inference"
   ],
   "main": "lib/index",
   "module": "lib/index",
@@ -54,7 +57,8 @@
     "react-native.config.js",
     "react-native-litert-lm.podspec",
     "app.plugin.js",
-    "README.md"
+    "README.md",
+    "FORK.md"
   ],
   "sideEffects": false,
   "engines": {
@@ -71,14 +75,12 @@
     "download-frameworks": "scripts/download-ios-frameworks.sh",
     "android": "expo run:android",
     "android:clean": "cd android && ./gradlew clean",
-    "ios": "expo run:ios",
-    "release": "release-it"
+    "ios": "expo run:ios"
   },
   "devDependencies": {
     "@expo/config-plugins": "~55.0.0",
     "@types/react": "~19.2.10",
     "react-native-nitro-modules": "^0.35.4",
-    "release-it": "^19.2.4",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
