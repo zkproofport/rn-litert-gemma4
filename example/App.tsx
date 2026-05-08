@@ -169,35 +169,31 @@ const SKILLS: SkillDef[] = [
   },
   {
     name: 'weather',
-    description: 'Get weather for a specific city — current conditions, hour-by-hour forecast (later today / tomorrow morning / specific hour), 7-day daily forecast, UV index, or air quality. Requires a city name; if the user mentions only a duration ("this week", "tonight", "오후") without a city, ask which city.',
+    description: 'Look up weather for a specific city. Supports current conditions, hour-by-hour forecast for a time window in the next 48 hours, multi-day daily outlook, UV exposure, and air quality. Requires a city name; otherwise ask the user which city.',
     instructions:
-      'PREREQUISITE: parse a city name from the user message (English, Korean, or any language). If NO city is mentioned AND the conversation has no prior city context, reply: "Which city would you like the weather for?" and stop. Otherwise reuse the last-mentioned city from prior turns.\n' +
+      'Required input: a city name (any language). If the user did not name a city and the conversation has no prior city, reply asking which city and stop. Otherwise reuse the most recent city from prior turns.\n' +
       '\n' +
-      'INTENT DETECTION (pick ONE path):\n' +
-      '  CURRENT  — keywords: "now/right now/지금/현재"\n' +
-      '  HOURLY   — keywords: "오후/오전/저녁/밤/이따/tonight/this afternoon/X시/N hours later/내일 아침/내일 N시"\n' +
-      '  FORECAST — keywords: "this week/forecast/이번주/내일/모레/주말/N일/several days"\n' +
-      '  UV       — keywords: "uv/UV index/자외선"\n' +
-      '  AIR      — keywords: "air quality/dust/미세먼지/공기질/pm2.5/pm10/pollen"\n' +
-      'If multiple keywords appear, prefer in this order: AIR > UV > HOURLY > FORECAST > CURRENT.\n' +
+      'Choose ONE path based on the user intent:\n' +
+      '  CURRENT  — wants the weather right now\n' +
+      '  HOURLY   — wants a specific time window within the next 48 hours (e.g. later today, tonight, tomorrow morning, a specific hour)\n' +
+      '  FORECAST — wants a multi-day daily outlook (3 to 7 days)\n' +
+      '  UV       — wants UV exposure / sunscreen guidance\n' +
+      '  AIR      — wants air quality (PM2.5, PM10, AQI)\n' +
+      'If the request mixes intents, prefer in this order: AIR > UV > HOURLY > FORECAST > CURRENT.\n' +
       '\n' +
-      'COMMON Step 1 (geocoding — required for all paths): Call run_api with method="GET" and url="https://geocoding-api.open-meteo.com/v1/search?name=<URL-encoded English city name>&count=1". Response: results[0].latitude, results[0].longitude. If empty, reply: "I could not find a city named <city>." and stop.\n' +
+      'Step 1 (geocoding, required for all paths): run_api { method: "GET", url: "https://geocoding-api.open-meteo.com/v1/search?name=<url-encoded English city>&count=1" }. Take results[0].latitude and results[0].longitude. If results is empty, reply that the city was not found and stop.\n' +
       '\n' +
-      'CURRENT path Step 2: Call run_api with method="GET" and url="https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,relative_humidity_2m,uv_index". Response: current.temperature_2m (°C), apparent_temperature (feels-like °C), weather_code (WMO), wind_speed_10m (km/h), precipitation (mm), relative_humidity_2m (%), uv_index (0–11).\n' +
-      'CURRENT Step 3: Translate weather_code per WMO TABLE, then reply with 1–2 sentences. Example: "Seoul is 14°C (feels 12°C), partly cloudy, light wind 3 km/h, humidity 60%."\n' +
+      'Step 2 — CURRENT: run_api { method: "GET", url: "https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,relative_humidity_2m,uv_index" }. Read current.* fields. Step 3: translate weather_code via the WMO table, reply in 1–2 sentences (temperature, feels-like, condition, wind, humidity).\n' +
       '\n' +
-      'HOURLY path Step 2: Call run_api with method="GET" and url="https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&hourly=temperature_2m,weather_code,precipitation_probability,precipitation,wind_speed_10m&timezone=auto&forecast_days=2". Response: hourly.time[] (ISO timestamps), hourly.temperature_2m[], hourly.weather_code[], hourly.precipitation_probability[] (0-100), hourly.precipitation[] (mm), hourly.wind_speed_10m[] (km/h).\n' +
-      'HOURLY Step 3: Filter hourly.time[] entries to the requested time window (e.g. "오후" = 12:00–18:00 today; "tonight" = 18:00–24:00 today; "내일 아침" = 06:00–11:00 tomorrow; "8시" = exact hour match). Summarize the matched hours in 1–3 sentences. Mention temperature range, dominant weather_code, precipitation probability if >30%. Example: "Seoul afternoon (오후): 16–19°C, mostly cloudy turning to light rain around 16:00 (60% chance), wind 3–5 km/h."\n' +
+      'Step 2 — HOURLY: run_api { method: "GET", url: "https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&hourly=temperature_2m,weather_code,precipitation_probability,precipitation,wind_speed_10m&timezone=auto&forecast_days=2" }. Read hourly.time[] (ISO timestamps in the city local time) and the parallel arrays. Step 3: select the entries whose timestamps fall in the user-requested window (interpret natural-language windows yourself based on the user message and current local time). Summarize that window in 1–3 sentences (temperature range, dominant condition, precipitation probability if above 30%).\n' +
       '\n' +
-      'FORECAST path Step 2: Call run_api with method="GET" and url="https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,uv_index_max&timezone=auto&forecast_days=7". Response: daily.time[], daily.temperature_2m_max[], daily.temperature_2m_min[], daily.weather_code[], daily.precipitation_sum[], daily.uv_index_max[].\n' +
-      'FORECAST Step 3: Summarize the 7 days in one paragraph (max 6 sentences). Mention min/max range, dominant condition, rainy/snowy days, peak UV if >7. Example: "Seoul this week: highs 12–18°C, lows 6–10°C; mostly cloudy with rain on Wed and Sat. UV peaks at 6 on Friday."\n' +
+      'Step 2 — FORECAST: run_api { method: "GET", url: "https://api.open-meteo.com/v1/forecast?latitude=<lat>&longitude=<lon>&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,uv_index_max&timezone=auto&forecast_days=7" }. Step 3: summarize daily arrays in one paragraph (max 6 sentences) — overall min/max range, dominant condition, rainy/snowy days, peak UV if above 7.\n' +
       '\n' +
-      'UV path Step 2: Same call as FORECAST (uses uv_index_max in daily). Step 3: Summarize daily UV: "Seoul UV outlook: today 4 (moderate), peak 7 (high) on Friday — wear sunscreen Friday." Use UV bands: 0–2 low, 3–5 moderate, 6–7 high, 8–10 very high, 11+ extreme.\n' +
+      'Step 2 — UV: same call as FORECAST. Step 3: report daily uv_index_max with bands: 0–2 low, 3–5 moderate, 6–7 high, 8–10 very high, 11+ extreme.\n' +
       '\n' +
-      'AIR path Step 2: Call run_api with method="GET" and url="https://air-quality-api.open-meteo.com/v1/air-quality?latitude=<lat>&longitude=<lon>&current=pm2_5,pm10,european_aqi,us_aqi". Response: current.pm2_5 (µg/m³), pm10 (µg/m³), european_aqi (0–100+), us_aqi (0–500). Note: this is a DIFFERENT host (air-quality-api.open-meteo.com).\n' +
-      'AIR Step 3: Reply with 1–2 sentences using the European AQI bands: 0–20 good, 21–40 fair, 41–60 moderate, 61–80 poor, 81–100 very poor, 101+ extremely poor. Example: "Seoul air quality: PM2.5 18 µg/m³, PM10 32 µg/m³, AQI 35 (fair) — outdoor activity OK."\n' +
+      'Step 2 — AIR: run_api { method: "GET", url: "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=<lat>&longitude=<lon>&current=pm2_5,pm10,european_aqi,us_aqi" }. Note this host is air-quality-api.open-meteo.com (different from the forecast host). Step 3: reply with European AQI bands: 0–20 good, 21–40 fair, 41–60 moderate, 61–80 poor, 81–100 very poor, 101+ extremely poor.\n' +
       '\n' +
-      'WMO weather_code TABLE (memorize, translate to natural English/Korean):\n' +
+      'WMO weather_code reference (translate to the user language naturally):\n' +
       '  0 = clear sky\n' +
       '  1 = mainly clear, 2 = partly cloudy, 3 = overcast\n' +
       '  45 = fog, 48 = depositing rime fog\n' +
@@ -207,7 +203,9 @@ const SKILLS: SkillDef[] = [
       '  77 = snow grains\n' +
       '  80 = slight rain showers, 81 = moderate rain showers, 82 = violent rain showers\n' +
       '  85 = slight snow showers, 86 = heavy snow showers\n' +
-      '  95 = thunderstorm, 96 = thunderstorm with slight hail, 99 = thunderstorm with heavy hail',
+      '  95 = thunderstorm, 96 = thunderstorm with slight hail, 99 = thunderstorm with heavy hail\n' +
+      '\n' +
+      'Reply in the same language the user wrote in.',
   },
   {
     name: 'wikipedia',
