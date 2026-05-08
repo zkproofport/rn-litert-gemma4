@@ -78,6 +78,3 @@ yarn-error.log
 # Per-derivedDataPath build dirs (xcodebuild -derivedDataPath build-sim)
 build-sim/
 build-device/
-
-# npm lockfile is machine-specific because of file:.. symlink deps
-package-lock.json
