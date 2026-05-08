@@ -41,6 +41,15 @@ yarn-error.log*
 
 # iOS frameworks (built from source or downloaded from releases)
 ios/Frameworks/
+# iOS GPU dylibs (Metal accelerator + LiteRt + GemmaModelConstraintProvider).
+# Distributed via GitHub Releases; postinstall fetches the right slice.
+ios/dylibs/
+# Upstream LiteRT-LM source (symlink tree under cpp/upstream/{common,
+# include-sim,include-dev}). Resolved from /tmp/LiteRT-LM-src at build time
+# via scripts/build-ios-xcframework.sh. Never committed.
+cpp/upstream/
+# Backup files from in-place edits (e.g. cpp/include/*.h.bak.*)
+*.bak.*
 # Prebuilt framework zip (uploaded to GitHub Releases, not committed)
 LiteRTLM-ios-frameworks.zip
 # Bazel build cache for LiteRT-LM source compilation

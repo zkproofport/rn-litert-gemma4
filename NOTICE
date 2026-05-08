@@ -1,0 +1,59 @@
+@zkproofport/rn-litert-gemma4
+
+This product includes software developed by Google LLC and the LiteRT-LM
+authors, distributed under the Apache License, Version 2.0. A copy of the
+license can be obtained at:
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Third-party components and their licenses:
+
+================================================================================
+LiteRT-LM (Google AI Edge)
+  https://github.com/google-ai-edge/LiteRT-LM
+  License: Apache-2.0
+  Used as: prebuilt iOS XCFramework + GPU accelerator dylibs (libLiteRt,
+           libLiteRtMetalAccelerator), distributed via GitHub Releases.
+--------------------------------------------------------------------------------
+react-native-litert-lm (hung-yueh, upstream of this fork)
+  https://github.com/hung-yueh/react-native-litert-lm
+  License: MIT
+  This fork preserves hung-yueh's MIT copyright. See LICENSE.
+--------------------------------------------------------------------------------
+GemmaModelConstraintProvider (Google AI Edge)
+  Distributed alongside LiteRT-LM v0.10.2+ as a prebuilt dylib.
+  License: Apache-2.0
+  Used as: dynamic library shipped in App.app/Frameworks/ to enable real
+           FST-based constrained decoding for Gemma 4 native function calling.
+           Without it, `enable_constrained_decoding=true` falls back to the
+           stub provider in LiteRT-LM's static archive.
+--------------------------------------------------------------------------------
+LLguidance
+  https://github.com/microsoft/llguidance
+  License: Apache-2.0 / MIT (dual-licensed)
+  Used as: FST constraint engine, statically linked into
+           libGemmaModelConstraintProvider.dylib.
+--------------------------------------------------------------------------------
+React Native + Nitro Modules
+  https://github.com/facebook/react-native, https://github.com/mrousavy/nitro
+  License: MIT
+================================================================================
+
+Gemma model usage notice
+--------------------------------------------------------------------------------
+This package facilitates running Google's Gemma family of models (Gemma 4 E2B,
+E4B; Gemma 3, etc.) on-device. The model weights themselves are NOT bundled in
+this package and are downloaded separately from HuggingFace
+(litert-community/gemma-4-*-it-litert-lm).
+
+Gemma model weights are governed by the Gemma Terms of Use:
+
+  https://ai.google.dev/gemma/terms
+
+Downstream applications that ship Gemma weights must comply with the Gemma
+Prohibited Use Policy:
+
+  https://ai.google.dev/gemma/prohibited_use_policy
+
+Distribution and use of Gemma model weights is the responsibility of the
+consuming application, not this package.

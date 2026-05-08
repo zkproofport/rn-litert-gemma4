@@ -1,4 +1,13 @@
-# react-native-litert-lm
+# @zkproofport/rn-litert-gemma4
+
+> **Fork notice.** This package is a hard fork of [`react-native-litert-lm`
+> v0.3.6](https://github.com/hung-yueh/react-native-litert-lm) by hung-yueh,
+> taken on 2026-04-30. See [FORK.md](./FORK.md) for the full rationale and
+> diff vs upstream. Upstream `react-native-litert-lm` is excellent — fork
+> exists to ship a **Gemma 4-first**, **agent-chat-tuned** surface with
+> native function calling (LiteRT-LM C engine `tools_json` +
+> `enable_constrained_decoding` + speculative decoding) end-to-end. Original
+> MIT copyright is preserved in [LICENSE](./LICENSE).
 
 High-performance on-device LLM inference for React Native, powered by [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) and [Nitro Modules](https://github.com/mrousavy/nitro). Optimized for **Gemma 4** and other on-device language models.
 
