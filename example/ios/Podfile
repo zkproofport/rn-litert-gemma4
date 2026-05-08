@@ -1,0 +1,65 @@
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, min_ios_version_supported
+prepare_react_native_project!
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+target 'RnMcpDemo' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false,
+      # :ccache_enabled => true
+    )
+
+    # LiteRTLM.xcframework only ships ios-arm64 + ios-arm64-simulator slices.
+    # Exclude x86_64 from simulator builds to avoid linker errors on Intel
+    # toolchains and keep the build green on Apple Silicon Macs.
+    installer.pods_project.build_configurations.each do |config|
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+    end
+
+    # Force-load LiteRTLM.framework into the main app so C++ static initializers
+    # (LITERT_LM_REGISTER_ENGINE in engine_impl.o) are preserved. Without this,
+    # `litert_lm_engine_create` returns "Engine type not found: 1".
+    installer.aggregate_targets.each do |agg|
+      agg.user_project.targets.each do |t|
+        next unless t.name == 'RnMcpDemo'
+        t.build_configurations.each do |c|
+          # Always reset to a known-good clean value (drop any prior malformed
+          # appends like `[ -ObjC ... ] -Wl,-force_load,...` which ld cannot
+          # parse). Pods inherits via `$(inherited)`.
+          # Force-load only the init archive (engine_impl.o) — preserves the
+          # LITERT_LM_REGISTER_ENGINE static initializers without dragging in
+          # protobuf JSON parser objects (type_resolver_util, untyped_message)
+          # that pull undefined symbols from the protobuf well-known wrappers
+          # (BytesValue, FloatValue, Enum, Type, ...) which weren't compiled.
+          c.build_settings['OTHER_LDFLAGS'] = [
+            '$(inherited)',
+            '-Wl,-force_load,"${BUILT_PRODUCTS_DIR}/XCFrameworkIntermediates/react-native-litert-lm/LiteRTLM.framework/LiteRTLMInit.a"',
+          ].join(' ')
+        end
+        t.project.save
+      end
+    end
+  end
+end

@@ -1,51 +1,26 @@
-const { getDefaultConfig } = require("expo/metro-config");
-const path = require("path");
+const path = require('path');
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
-const projectRoot = __dirname;
-const libraryRoot = path.resolve(projectRoot, "..");
+// Allow Metro to follow the file: symlinks for our two workspace packages
+// (we install both via `npm install file:../<pkg>`):
+//   node_modules/@zkproofport/rn-on-device-mcp  → ~/Workspace/rn-on-device-mcp
+//   node_modules/@zkproofport/rn-litert-gemma4  → ~/Workspace/rn-litert-gemma4
+// Without watchFolders, Metro refuses to bundle code outside the project root.
+const sdkRoots = [
+  path.resolve(__dirname, '..', 'rn-on-device-mcp'),
+  path.resolve(__dirname, '..', 'rn-litert-gemma4'),
+];
 
-const config = getDefaultConfig(projectRoot);
-
-// Watch the local library folder for changes
-config.watchFolders = [libraryRoot];
-
-const libraryNodeModules = path.resolve(libraryRoot, "node_modules");
-
-// Helper to create regex for blocking
-// We block the library's react and react-native to ensure we use the example app's versions
-const modulesToBlock = ["react", "react-native"];
-const blockRegexes = modulesToBlock.map(
-  (moduleName) =>
-    new RegExp(
-      `^${escapeRegExp(path.join(libraryNodeModules, moduleName))}\\/.*`,
-    ),
-);
-
-if (!config.resolver.blockList) {
-  config.resolver.blockList = [];
-}
-
-if (Array.isArray(config.resolver.blockList)) {
-  config.resolver.blockList.push(...blockRegexes);
-} else {
-  // Fallback for older Metro versions or if default config structure is different
-  config.resolver.blockList = [
-    ...(config.resolver.blockList || []),
-    ...blockRegexes,
-  ];
-}
-
-// Resolve the library's source files and force React resolution
-config.resolver.extraNodeModules = {
-  "react-native-litert-lm": libraryRoot,
-  react: path.resolve(projectRoot, "node_modules/react"),
-  "react-native": path.resolve(projectRoot, "node_modules/react-native"),
+/** @type {import('@react-native/metro-config').MetroConfig} */
+const config = {
+  watchFolders: sdkRoots,
+  resolver: {
+    nodeModulesPaths: [
+      path.resolve(__dirname, 'node_modules'),
+      ...sdkRoots.map((r) => path.join(r, 'node_modules')),
+    ],
+    unstable_enableSymlinks: true,
+  },
 };
 
-config.resolver.nodeModulesPaths = [path.resolve(projectRoot, "node_modules")];
-
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-module.exports = config;
+module.exports = mergeConfig(getDefaultConfig(__dirname), config);
