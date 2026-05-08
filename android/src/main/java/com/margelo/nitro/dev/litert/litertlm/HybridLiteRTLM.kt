@@ -17,6 +17,10 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.ExperimentalFlags
+import com.google.ai.edge.litertlm.ExperimentalApi
 import com.margelo.nitro.dev.litert.litertlm.Backend
 import com.margelo.nitro.dev.litert.litertlm.GenerationStats
 import com.margelo.nitro.dev.litert.litertlm.HybridLiteRTLMSpec
@@ -122,12 +126,18 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
         tokensPerSecond = 0.0
     )
 
-    // Configuration
+    // Configuration. Defaults mirror Edge Gallery upstream
+    // `model_allowlists/1_0_13.json` `defaultConfig` for Gemma-4-E2B/E4B-it
+    // under the `llm_agent_chat` task: temperature=1.0, topK=64, topP=0.95,
+    // maxTokens=4000. Caller may override via LLMConfig.
     private var backend: Backend = Backend.CPU
-    private var temperature: Double = 0.7
-    private var topK: Int = 40
+    private var temperature: Double = 1.0
+    private var topK: Int = 64
     private var topP: Double = 0.95
-    private var maxTokens: Int = 1024
+    private var maxTokens: Int = 4000
+    // Total engine token budget (input + output). Mirrors upstream
+    // `maxContextLength: 32000` for Gemma 4.
+    private var contextWindow: Int = 32000
     private var systemPrompt: String? = null
 
     override val memorySize: Long
@@ -194,23 +204,41 @@ class HybridLiteRTLM : HybridLiteRTLMSpec() {
                             backend = lmBackend,
                             visionBackend = lmVisionBackend!!,
                             audioBackend = lmAudioBackend!!,
-                            maxNumTokens = maxTokens,
+                            // maxNumTokens is the engine-level total token budget
+                            // (input + output KV cache). maxTokens is per-session
+                            // output cap, applied via ConversationConfig downstream.
+                            maxNumTokens = contextWindow,
                             cacheDir = cacheDirectory
                         )
                     } else {
                         EngineConfig(
                             modelPath = modelPath,
                             backend = lmBackend,
-                            maxNumTokens = maxTokens,
+                            // maxNumTokens is the engine-level total token budget
+                            // (input + output KV cache). maxTokens is per-session
+                            // output cap, applied via ConversationConfig downstream.
+                            maxNumTokens = contextWindow,
                             cacheDir = cacheDirectory
                         )
                     }
     
                     if (isClosed) return@synchronized
-                    
-                    // Initialize Engine
-                    engine = Engine(engineConfig).also { it.initialize() }
-                    Log.i(TAG, "Engine created and initialized successfully")
+
+                    // Initialize Engine. Speculative decoding (Multi-Token
+                    // Prediction) is enabled unconditionally — engines that
+                    // lack a drafter section in the .litertlm bundle ignore
+                    // the flag at runtime. Mirrors Edge Gallery upstream
+                    // (LlmChatModelHelper.kt set + reset pattern).
+                    @OptIn(ExperimentalApi::class)
+                    run {
+                        ExperimentalFlags.enableSpeculativeDecoding = true
+                        try {
+                            engine = Engine(engineConfig).also { it.initialize() }
+                        } finally {
+                            ExperimentalFlags.enableSpeculativeDecoding = false
+                        }
+                    }
+                    Log.i(TAG, "[FORK] backend_resolved=$lmBackend speculative_decoding=true")
     
                     // Create Conversation
                     createNewConversation()

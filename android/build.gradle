@@ -50,6 +50,12 @@ android {
     
     kotlinOptions {
         jvmTarget = '17'
+        // LiteRT-LM Android Maven (litertlm-android:0.10.2+) is published with
+        // Kotlin metadata 2.3.0. Most React Native toolchains pin Kotlin 2.0.x
+        // / 2.1.x, which can only read up to metadata 2.2. Skipping the check
+        // is safe here because the JVM bytecode level is unchanged — only the
+        // Kotlin metadata header version differs.
+        freeCompilerArgs += '-Xskip-metadata-version-check'
     }
     
     sourceSets {
@@ -64,6 +70,16 @@ android {
     packaging {
         jniLibs {
             keepDebugSymbols.add("**/*.so")
+            // Exclude .so files we link against but don't own. These come
+            // from other AARs (NitroModules, ReactNative, fbjni, jsi, libc++)
+            // via Prefab IMPORTED targets. If we re-publish them in our AAR,
+            // app:mergeDebugNativeLibs fails with DuplicateRelativeFileException
+            // when both AARs contribute the same .so path.
+            excludes.add("**/libNitroModules.so")
+            excludes.add("**/libreactnative.so")
+            excludes.add("**/libjsi.so")
+            excludes.add("**/libfbjni.so")
+            excludes.add("**/libc++_shared.so")
         }
     }
 }
