@@ -112,6 +112,7 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				497D606D06FF5A72D6B766BC /* [litert-lm] Embed GPU dylibs */,
 			);
 			buildRules = (
 			);
@@ -198,6 +199,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-RnMcpDemo/Pods-RnMcpDemo-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		497D606D06FF5A72D6B766BC /* [litert-lm] Embed GPU dylibs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "[litert-lm] Embed GPU dylibs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/../../node_modules/@zkproofport/rn-litert-gemma4/scripts/copy-litert-gpu-dylibs.sh\"";
 			showEnvVarsInLog = 0;
 		};
 		C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */ = {

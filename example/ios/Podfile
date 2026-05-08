@@ -58,6 +58,26 @@ target 'RnMcpDemo' do
             '-Wl,-force_load,"${BUILT_PRODUCTS_DIR}/XCFrameworkIntermediates/react-native-litert-lm/LiteRTLM.framework/LiteRTLMInit.a"',
           ].join(' ')
         end
+
+        # Add a Run Script Build Phase that copies + codesigns the GPU
+        # accelerator dylibs into App.app/Frameworks/. Idempotent — re-running
+        # `pod install` will not duplicate the phase. Without this, LiteRT-LM
+        # falls back to CPU at runtime (~10-25x slower than GPU).
+        phase_name = '[litert-lm] Embed GPU dylibs'
+        # ${PODS_ROOT} == <app>/ios/Pods, so go up 2 levels to reach <app>/
+        # where node_modules/ lives.
+        embed_script = '"${PODS_ROOT}/../../node_modules/@zkproofport/rn-litert-gemma4/scripts/copy-litert-gpu-dylibs.sh"'
+        existing = t.shell_script_build_phases.find { |p| p.name == phase_name }
+        if existing
+          existing.shell_script = embed_script
+        else
+          phase = t.new_shell_script_build_phase(phase_name)
+          phase.shell_script = embed_script
+          phase.input_paths = []
+          phase.output_paths = []
+          phase.show_env_vars_in_log = '0'
+        end
+
         t.project.save
       end
     end
