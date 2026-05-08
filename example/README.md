@@ -1,97 +1,59 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# example — RnMcpDemo
 
-# Getting Started
+Test harness + interactive chat for `@zkproofport/rn-litert-gemma4`. Runs 13
+automated scenarios (mobile actions, MCP round-trip, weather, direct FC) and
+then hands a live LLM runtime to a chat panel for free-form testing.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Setup
 
-## Step 1: Start Metro
-
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
-
-To start the Metro dev server, run the following command from the root of your React Native project:
-
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```bash
+# from the fork root:
+cd example
+npm install               # links @zkproofport/rn-litert-gemma4 from `..`
+cd ios && pod install && cd ..
 ```
 
-## Step 2: Build and run your app
+iOS GPU acceleration requires the LiteRT-LM Metal/GPU dylibs to be embedded
+in `App.app/Frameworks/`. The fork ships them under `../ios/dylibs/`. Until
+podspec auto-embed (TODO), copy them manually after each build:
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+```bash
+APP=ios/build-sim/Build/Products/Debug-iphonesimulator/RnMcpDemo.app
+DYLIB=../ios/dylibs/ios_sim_arm64
+for d in libLiteRt.dylib libLiteRtMetalAccelerator.dylib libGemmaModelConstraintProvider.dylib; do
+  cp "$DYLIB/$d" "$APP/Frameworks/$d"
+  codesign -fs - "$APP/Frameworks/$d"
+done
+codesign -fs - --deep "$APP"
 ```
 
-### iOS
+## Models
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+The harness expects `gemma-4-E2B-it.litertlm` (or E4B) in the simulator's
+Documents directory. The first launch shows a `ModelGate` UI that downloads
+from HuggingFace if missing:
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+- E2B (~2.58 GB, default) — fast, lower quality
+- E4B (~3.65 GB) — stronger but ~2-3x slower on CPU
 
-```sh
-bundle install
+## MCP server (for D1/D2 scenarios)
+
+Start a local MCP server on the host:
+
+```bash
+npx -y supergateway \
+  --stdio "npx -y @modelcontextprotocol/server-everything" \
+  --port 4567 --outputTransport streamableHttp
 ```
 
-Then, and every time you update your native dependencies, run:
+The harness connects to `http://localhost:4567/mcp` with bearer token
+`rn-mcp-demo`.
 
-```sh
-bundle exec pod install
-```
+## Notes
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+- iOS Simulator falls back to CPU regardless of GPU dylib presence
+  (LiteRT-LM Metal compute incompatible with the macOS GPU emulation
+  layer). For real GPU benchmarks, build to a device.
+- Speculative decoding is enabled unconditionally on engines that report
+  drafter sections in the .litertlm bundle. Drafted/verified token counts
+  stay 0 on CPU; effect only kicks in on device GPU.
