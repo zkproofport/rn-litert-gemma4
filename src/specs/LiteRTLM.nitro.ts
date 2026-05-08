@@ -98,6 +98,23 @@ export interface LLMConfig {
    * `tools` is non-empty, `false` otherwise.
    */
   enableConstrainedDecoding?: boolean;
+
+  /**
+   * JSON-stringified array of prior conversation messages to seed the
+   * conversation with. Each element shapes like:
+   *   `{"role":"user","content":"..."}`
+   *   `{"role":"assistant","tool_calls":[{"function":{"name":"...","arguments":{...}}}]}`
+   *   `{"role":"tool","content":[{"name":"...","response":{...}}]}`
+   *
+   * Use this to inject few-shot in-context demonstrations of correct
+   * tool-calling behavior into the conversation history before the user's
+   * first real message. Critical for small models (Gemma 4 E2B) whose
+   * RLHF defaults cause them to refuse "real-time" queries instead of
+   * calling available tools — a successful prior tool-call exchange in
+   * history shifts the conditional probability toward calling the tool
+   * again on similar queries.
+   */
+  priorMessages?: string;
 }
 
 /**

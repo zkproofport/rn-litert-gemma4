@@ -2,7 +2,12 @@
 // HybridLiteRTLM.cpp
 // react-native-litert-lm
 //
-// High-performance LLM inference using LiteRT-LM C API.
+// High-performance LLM inference using LiteRT-LM C++ runtime classes
+// directly. We previously called the C API (cpp/include/litert_lm_engine.h)
+// which exposed only a subset of the engine's capabilities — the C++ API
+// gives us channels, overwrite_prompt_template, JsonPreface.extra_context,
+// filter_channel_content_from_kv_cache, plus structured tool_calls in the
+// response (no more text-fence-block regex parsing).
 //
 // NOTE: This C++ implementation is used for iOS ONLY.
 // Android uses the Kotlin implementation in `android/src/main/java/com/margelo/nitro/dev/litert/litertlm/HybridLiteRTLM.kt`.
@@ -10,9 +15,6 @@
 //
 
 #include "HybridLiteRTLM.hpp"
-
-
-
 
 #include <NitroModules/Promise.hpp>
 #include <chrono>
@@ -24,6 +26,22 @@
 #ifdef __APPLE__
 #include "IOSDownloadHelper.h"
 #include <os/proc.h>
+// Upstream LiteRT-LM C++ runtime headers (resolved via cpp/upstream/* symlinks).
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "nlohmann/json.hpp"
+#include "runtime/conversation/conversation.h"
+#include "runtime/conversation/io_types.h"
+#include "runtime/engine/engine.h"
+#include "runtime/engine/engine_factory.h"
+#include "runtime/engine/engine_settings.h"
+#include "runtime/engine/io_types.h"
+#include "runtime/util/file_util.h"
+// (HasSpeculativeDecodingSupport from schema/capabilities is built as a
+// separate Bazel sublib that's NOT bundled in our prebuilt XCFramework's
+// static archive — link fails with "Undefined symbols". We rely on the
+// engine itself to handle missing drafter sections gracefully when
+// enable_speculative_decoding is set unconditionally.)
 #endif
 #include <fstream>
 #include <thread>
@@ -208,51 +226,108 @@ void HybridLiteRTLM::createNewConversation() {
   if (!engine_) {
     throw std::runtime_error("Cannot create conversation: engine not initialized");
   }
-  
-  // Clean up previous conversation
-  if (conversation_) {
-    litert_lm_conversation_delete(conversation_);
-    conversation_ = nullptr;
-  }
-  if (conv_config_) {
-    litert_lm_conversation_config_delete(conv_config_);
-    conv_config_ = nullptr;
-  }
-  
-  // Build system message JSON if provided
-  std::string systemMsgJson;
-  const char* systemMsgPtr = nullptr;
+
+  // Reset previous conversation (unique_ptr handles native cleanup).
+  conversation_.reset();
+
+  // Build the JsonPreface for the conversation.
+  //
+  // Messages: optional system prompt as the first message, plus prior turns.
+  // Tools: parsed from toolsJson_ (OpenAI-style JSON array — same format the
+  // Kotlin SDK passes via its Tool::getToolsDescription()).
+  // Extra context: free-form JSON object substituted into the chat template
+  // (e.g. {"datetime": "...", "user_location": "Seoul"}).
+  //
+  // FunctionGemma's chat template treats `content` as either a string OR an
+  // array of {type:"text",text:"..."} items. The marker "<<<SECTION>>>"
+  // splits the system prompt so the first part renders before tool
+  // declarations and the rest renders after — matching Edge Gallery's
+  // MobileActions pattern (system intro → tools → datetime).
+  ::litert::lm::JsonPreface json_preface;
+  nlohmann::ordered_json messages_array = nlohmann::ordered_json::array();
+
   if (!systemPrompt_.empty()) {
-    systemMsgJson = "{\"role\":\"system\",\"content\":\"" + escapeJson(systemPrompt_) + "\"}";
-    systemMsgPtr = systemMsgJson.c_str();
+    nlohmann::ordered_json system_msg;
+    system_msg["role"] = "system";
+    const std::string marker = "<<<SECTION>>>";
+    auto pos = systemPrompt_.find(marker);
+    if (pos != std::string::npos) {
+      auto content_arr = nlohmann::ordered_json::array();
+      content_arr.push_back({{"type", "text"},
+                             {"text", systemPrompt_.substr(0, pos)}});
+      content_arr.push_back({{"type", "text"},
+                             {"text", systemPrompt_.substr(pos + marker.size())}});
+      system_msg["content"] = std::move(content_arr);
+    } else {
+      system_msg["content"] = systemPrompt_;
+    }
+    messages_array.push_back(std::move(system_msg));
   }
-  
-  // Create conversation config with session config + Gemma 4 tools.
-  // When toolsJson_ is non-empty, the engine will inject the proper
-  // <|tool>declaration:NAME{...}<tool|> block into the chat template, and the
-  // model will emit <|tool_call>call:NAME{...}<tool_call|> when it decides to
-  // call a tool. Constrained decoding (when enabled) forces well-formed tool
-  // calls at the token level — no JS-side regex parsing of arbitrary text.
-  const char* toolsPtr = toolsJson_.empty() ? nullptr : toolsJson_.c_str();
-  conv_config_ = litert_lm_conversation_config_create(
-    engine_,
-    session_config_,
-    systemMsgPtr,
-    toolsPtr,
-    nullptr,
-    enableConstrainedDecoding_
-  );
-  if (!conv_config_) {
-    throw std::runtime_error("Failed to create conversation config");
+
+  if (!priorMessagesJson_.empty()) {
+    try {
+      auto prior = nlohmann::ordered_json::parse(priorMessagesJson_);
+      if (prior.is_array()) {
+        for (auto& m : prior) messages_array.push_back(std::move(m));
+      }
+    } catch (const std::exception& e) {
+      fprintf(stderr, "[FORK] WARNING: priorMessages parse failed: %s\n", e.what());
+    }
   }
-  
-  // Create conversation
-  conversation_ = litert_lm_conversation_create(engine_, conv_config_);
-  if (!conversation_) {
-    litert_lm_conversation_config_delete(conv_config_);
-    conv_config_ = nullptr;
-    throw std::runtime_error("Failed to create conversation");
+
+  json_preface.messages = std::move(messages_array);
+
+  if (!toolsJson_.empty()) {
+    try {
+      json_preface.tools = nlohmann::ordered_json::parse(toolsJson_);
+    } catch (const std::exception& e) {
+      fprintf(stderr, "[FORK] WARNING: toolsJson parse failed: %s\n", e.what());
+    }
   }
+
+  if (!extraContextJson_.empty()) {
+    try {
+      json_preface.extra_context = nlohmann::ordered_json::parse(extraContextJson_);
+    } catch (const std::exception& e) {
+      fprintf(stderr, "[FORK] WARNING: extraContextJson parse failed: %s\n", e.what());
+    }
+  }
+
+  fprintf(stderr,
+    "[FORK] conv_config: tools_set=%d constrained=%d sysPrompt_set=%d "
+    "priorMsgs_count=%zu extraCtx_set=%d filterCh=%d\n",
+    !toolsJson_.empty() ? 1 : 0,
+    enableConstrainedDecoding_ ? 1 : 0,
+    !systemPrompt_.empty() ? 1 : 0,
+    priorMessagesJson_.empty() ? 0 :
+      (nlohmann::ordered_json::accept(priorMessagesJson_) ?
+        nlohmann::ordered_json::parse(priorMessagesJson_).size() : 0),
+    !extraContextJson_.empty() ? 1 : 0,
+    filterChannelContent_ ? 1 : 0);
+
+  auto config_or = ::litert::lm::ConversationConfig::Builder()
+    .SetSessionConfig(session_config_)
+    .SetPreface(json_preface)
+    .SetEnableConstrainedDecoding(enableConstrainedDecoding_)
+    .SetFilterChannelContentFromKvCache(filterChannelContent_)
+    .Build(*engine_);
+  if (!config_or.ok()) {
+    fprintf(stderr, "[FORK] ConversationConfig::Build failed: %s\n",
+            config_or.status().ToString().c_str());
+    throw std::runtime_error("Failed to build conversation config: " +
+                             std::string(config_or.status().ToString()));
+  }
+
+  auto conv_or = ::litert::lm::Conversation::Create(*engine_, *config_or);
+  if (!conv_or.ok()) {
+    fprintf(stderr, "[FORK] Conversation::Create failed: %s\n",
+            conv_or.status().ToString().c_str());
+    throw std::runtime_error("Failed to create conversation: " +
+                             std::string(conv_or.status().ToString()));
+  }
+  conversation_ = std::move(*conv_or);
+  fprintf(stderr, "[FORK] conversation created OK conv=%p\n",
+          static_cast<void*>(conversation_.get()));
 #endif
 }
 
@@ -324,66 +399,157 @@ void HybridLiteRTLM::loadModelInternal(
       // Default: ON when tools is non-empty, OFF otherwise.
       enableConstrainedDecoding_ = !toolsJson_.empty();
     }
+    if (config->priorMessages.has_value()) {
+      priorMessagesJson_ = config->priorMessages.value();
+    }
   }
   
 #ifdef __APPLE__
-  // Set log verbosity: 2=WARNING (production), 0=INFO (debug)
-  litert_lm_set_min_log_level(2);
-
-  auto backendStr = [](Backend b) -> const char* {
-    switch (b) {
-      case Backend::GPU: return "gpu";
-      case Backend::NPU: return "gpu"; // NPU not available on iOS, use GPU
-      default: return "cpu";
-    }
-  };
-  
-  auto tryCreateEngine = [&](const char* backend, const char* visionBackend) -> bool {
-    auto* settings = litert_lm_engine_settings_create(
-      modelPath.c_str(),
-      backend,
-      visionBackend,
-      "cpu" // audio executor: iOS XCFramework lacks compiled audio ops (INTERNAL ERROR at Invoke)
-    );
-    if (!settings) {
-      return false;
-    }
-    
-    // contextWindow_ is the total token budget (input + output);
-    // maxTokens_ is enforced per-session via session_config below.
-    litert_lm_engine_settings_set_max_num_tokens(settings, static_cast<int>(contextWindow_));
-    litert_lm_engine_settings_enable_benchmark(settings);
-    
-    // Set cache directory to the same directory as the model file
-    std::string cacheDir = modelPath.substr(0, modelPath.find_last_of('/'));
-    litert_lm_engine_settings_set_cache_dir(settings, cacheDir.c_str());
-    
-    engine_ = litert_lm_engine_create(settings);
-    litert_lm_engine_settings_delete(settings);
-    
-    return engine_ != nullptr;
-  };
-  
-  // Try requested backend first (e.g. gpu/gpu)
-  const char* primaryBackend = backendStr(backend_);
-  if (!tryCreateEngine(primaryBackend, primaryBackend)) {
-    // Fallback chain for when the primary backend fails:
-    bool fallbackOk = false;
-    if (backend_ != Backend::CPU) {
-      // 1) Try CPU main + GPU vision (model's vision encoder often requires GPU)
-      fallbackOk = tryCreateEngine("cpu", "gpu");
-      // 2) Try CPU main + CPU vision
-      if (!fallbackOk) fallbackOk = tryCreateEngine("cpu", "cpu");
-    }
-    // 3) Try CPU main + no vision (nullptr skips vision executor entirely)
-    if (!fallbackOk) fallbackOk = tryCreateEngine("cpu", nullptr);
-    if (fallbackOk) {
-      backend_ = Backend::CPU;
+  // Fork debug: redirect stderr to <doc-dir>/litert-stderr.log so the engine's
+  // absl::LOG output (which never reaches os_log) can be inspected from the
+  // host. Works regardless of whether model is at Documents/<file> (device
+  // transfer) or Documents/models/<file> (simulator hardlink).
+  {
+    static bool stderrRedirected = false;
+    if (!stderrRedirected) {
+      std::string docDir = modelPath;
+      auto lastSlash = docDir.rfind('/');
+      if (lastSlash != std::string::npos) docDir = docDir.substr(0, lastSlash);
+      // Strip trailing /models if present (so log lands in Documents/)
+      const std::string modelsSuffix = "/models";
+      if (docDir.size() >= modelsSuffix.size() &&
+          docDir.compare(docDir.size() - modelsSuffix.size(), modelsSuffix.size(), modelsSuffix) == 0) {
+        docDir = docDir.substr(0, docDir.size() - modelsSuffix.size());
+      }
+      std::string logPath = docDir + "/litert-stderr.log";
+      FILE* tf = fopen(logPath.c_str(), "w"); if (tf) fclose(tf);
+      if (freopen(logPath.c_str(), "a", stderr) != nullptr) {
+        setvbuf(stderr, nullptr, _IOLBF, 0);
+        stderrRedirected = true;
+      }
     }
   }
-  
+  fprintf(stderr, "[FORK] loadModel: tools_len=%zu constrained=%d\n",
+          toolsJson_.size(), enableConstrainedDecoding_ ? 1 : 0);
+
+  // Translate the public Backend enum to the runtime's litert::lm::Backend.
+  auto toLitertBackend = [](Backend b) -> ::litert::lm::Backend {
+    switch (b) {
+      case Backend::GPU: return ::litert::lm::Backend::GPU;
+      case Backend::NPU: return ::litert::lm::Backend::GPU;  // iOS: no NPU
+      default:           return ::litert::lm::Backend::CPU;
+    }
+  };
+
+  auto tryCreateEngine = [&](::litert::lm::Backend mainBackend,
+                             std::optional<::litert::lm::Backend> visionBackend,
+                             std::optional<::litert::lm::Backend> audioBackend) -> bool {
+    auto modelAssets = ::litert::lm::ModelAssets::Create(modelPath);
+    if (!modelAssets.ok()) {
+      fprintf(stderr, "[FORK] ModelAssets::Create failed: %s\n",
+              modelAssets.status().ToString().c_str());
+      return false;
+    }
+
+    auto settings = ::litert::lm::EngineSettings::CreateDefault(
+      *std::move(modelAssets), mainBackend, visionBackend, audioBackend);
+    if (!settings.ok()) {
+      fprintf(stderr, "[FORK] EngineSettings::CreateDefault failed: %s\n",
+              settings.status().ToString().c_str());
+      return false;
+    }
+
+    // contextWindow_ is the total token budget (input + output);
+    // maxTokens_ is enforced per-session via session_config below.
+    settings->GetMutableMainExecutorSettings().SetMaxNumTokens(
+      static_cast<int>(contextWindow_));
+
+    // Set cache directory to the same directory as the model file.
+    std::string cacheDir = modelPath.substr(0, modelPath.find_last_of('/'));
+    settings->GetMutableMainExecutorSettings().SetCacheDir(cacheDir);
+    if (visionBackend.has_value() && settings->GetMutableVisionExecutorSettings()) {
+      settings->GetMutableVisionExecutorSettings()->SetCacheDir(cacheDir);
+    }
+    if (audioBackend.has_value() && settings->GetMutableAudioExecutorSettings()) {
+      settings->GetMutableAudioExecutorSettings()->SetCacheDir(cacheDir);
+    }
+
+    // Speculative decoding (Multi-Token Prediction): up to ~3x decode speedup
+    // on GPU per Google's 2026-04-03 Gemma 4 announcement. Edge Gallery
+    // wired this in on 2026-05-05 (LlmChatModelHelper.kt commit b5f5993b).
+    //
+    // Capability detection (HasSpeculativeDecodingSupport) lives in a Bazel
+    // sublib (`schema/capabilities`) that our prebuilt XCFramework does NOT
+    // include. We instead enable the flag unconditionally and rely on the
+    // engine to handle models that lack a drafter section. Empirically:
+    // models without a drafter ignore the flag without erroring (verified
+    // against Gemma 4 E2B/E4B which DO bundle drafter sections).
+    //
+    // NOTE: upstream model_allowlists/1_0_13.json declares spec_dec compatible
+    // with `llm_chat`/`llm_ask_image`/`llm_ask_audio`/`llm_prompt_lab` —
+    // NOT `llm_agent_chat`. We enable across the board to measure impact;
+    // if tool-call scenarios break, gate on `enableConstrainedDecoding_ == false`.
+    {
+      ::litert::lm::AdvancedSettings advanced;
+      const auto& existing =
+        settings->GetMutableMainExecutorSettings().GetAdvancedSettings();
+      if (existing.has_value()) advanced = *existing;
+      advanced.enable_speculative_decoding = true;
+      settings->GetMutableMainExecutorSettings().SetAdvancedSettings(advanced);
+      fprintf(stderr, "[FORK] speculative_decoding=enabled (unconditional, drafter detection at runtime)\n");
+    }
+
+    // Enable benchmark info collection (mutates settings to install benchmark
+    // params). The accessor return value is intentionally discarded.
+    (void)settings->GetMutableBenchmarkParams();
+
+    auto engineOr = ::litert::lm::EngineFactory::CreateDefault(*std::move(settings));
+    if (!engineOr.ok()) {
+      fprintf(stderr, "[FORK] EngineFactory::CreateDefault failed: %s\n",
+              engineOr.status().ToString().c_str());
+      return false;
+    }
+    engine_ = std::move(*engineOr);
+    return engine_ != nullptr;
+  };
+
+  using ::litert::lm::Backend;
+  // Try requested backend first (e.g. GPU/GPU, audio=CPU for multimodal Gemma 4).
+  Backend primary = toLitertBackend(backend_);
+  const char* requestedName = (primary == Backend::GPU) ? "GPU" : "CPU";
+  fprintf(stderr, "[FORK] backend_requested=%s\n", requestedName);
+  bool primaryOk = tryCreateEngine(primary, primary, Backend::CPU);
+  if (!primaryOk) {
+    fprintf(stderr, "[FORK] backend primary=%s FAILED — entering CPU fallback chain\n",
+            requestedName);
+    // Fallback chain for when the primary backend fails:
+    bool fallbackOk = false;
+    if (primary != Backend::CPU) {
+      // 1) Try CPU main + GPU vision + CPU audio (multimodal models)
+      fallbackOk = tryCreateEngine(Backend::CPU, Backend::GPU, Backend::CPU);
+      // 2) Try CPU main + CPU vision + CPU audio
+      if (!fallbackOk) fallbackOk = tryCreateEngine(Backend::CPU, Backend::CPU, Backend::CPU);
+    }
+    // 3) Try CPU main + no vision + CPU audio (model has no vision section)
+    if (!fallbackOk) fallbackOk = tryCreateEngine(Backend::CPU, std::nullopt, Backend::CPU);
+    // 4) Try CPU main + no vision + no audio (text-only model like FunctionGemma 270M)
+    if (!fallbackOk) fallbackOk = tryCreateEngine(Backend::CPU, std::nullopt, std::nullopt);
+    if (fallbackOk) {
+      backend_ = ::margelo::nitro::litertlm::Backend::CPU;
+    }
+  }
+  // Emit a single, easy-to-grep line showing what backend the engine ACTUALLY
+  // ended up using. This is what JS-side perf comparisons should be based on.
+  if (engine_) {
+    const char* resolvedName =
+      (backend_ == ::margelo::nitro::litertlm::Backend::GPU) ? "GPU" :
+      (backend_ == ::margelo::nitro::litertlm::Backend::NPU) ? "NPU" : "CPU";
+    fprintf(stderr, "[FORK] backend_resolved=%s requested=%s primary_ok=%d\n",
+            resolvedName, requestedName, primaryOk ? 1 : 0);
+  }
+
   if (!engine_) {
-    // Collect diagnostic info
+    // Collect diagnostic info.
     std::string diag = " | Diagnostics: ";
     struct stat st;
     if (stat(modelPath.c_str(), &st) == 0) {
@@ -391,7 +557,7 @@ void HybridLiteRTLM::loadModelInternal(
     } else {
       diag += "Failed to stat file (errno: " + std::to_string(errno) + ")";
     }
-    
+
     FILE* f = fopen(modelPath.c_str(), "rb");
     if (f) {
       diag += ", Readable: YES";
@@ -400,25 +566,31 @@ void HybridLiteRTLM::loadModelInternal(
       diag += ", Readable: NO (errno: " + std::to_string(errno) + ")";
     }
 
-
     throw std::runtime_error(
-      "Failed to create LiteRT-LM engine. Tried backend '" +
-      std::string(primaryBackend) + "' and CPU fallback. Model path: " + modelPath + diag);
+      "Failed to create LiteRT-LM engine (CPU+GPU paths exhausted). Model path: " +
+      modelPath + diag);
   }
-  
-  session_config_ = litert_lm_session_config_create();
-  if (session_config_) {
-    litert_lm_session_config_set_max_output_tokens(session_config_, static_cast<int>(maxTokens_));
-    
-    LiteRtLmSamplerParams sampler{};
-    sampler.type = kTopP;
-    sampler.top_k = static_cast<int32_t>(topK_);
-    sampler.top_p = static_cast<float>(topP_);
-    sampler.temperature = static_cast<float>(temperature_);
-    sampler.seed = 0;
-    litert_lm_session_config_set_sampler_params(session_config_, &sampler);
+
+  // Build the SessionConfig (kept as a value member so we can re-use it when
+  // hot-swapping the conversation in setTools/resetConversation).
+  session_config_ = ::litert::lm::SessionConfig::CreateDefault();
+  // Sampling parameters via mutable accessor.
+  auto& samplerParams = session_config_.GetMutableSamplerParams();
+  samplerParams.set_type(::litert::lm::proto::SamplerParameters::TOP_P);
+  samplerParams.set_k(static_cast<int>(topK_));
+  samplerParams.set_p(static_cast<float>(topP_));
+  samplerParams.set_temperature(static_cast<float>(temperature_));
+  samplerParams.set_seed(0);
+  // max_output_tokens is set per-session.
+  session_config_.SetMaxOutputTokens(static_cast<int>(maxTokens_));
+
+  if (engine_->GetEngineSettings().GetVisionExecutorSettings().has_value()) {
+    session_config_.SetVisionModalityEnabled(true);
   }
-  
+  if (engine_->GetEngineSettings().GetAudioExecutorSettings().has_value()) {
+    session_config_.SetAudioModalityEnabled(true);
+  }
+
   createNewConversation();
 #endif
   
@@ -450,31 +622,36 @@ std::string HybridLiteRTLM::sendMessageInternal(const std::string& message) {
   
 #ifdef __APPLE__
   std::string msgJson = buildTextMessageJson(message);
-  
-  auto* response = litert_lm_conversation_send_message(
-    conversation_, msgJson.c_str(), nullptr);
-  
-  if (!response) {
-    throw std::runtime_error("LiteRT-LM: sendMessage failed");
+  fprintf(stderr, "[FORK] sendMessage: msgJson_len=%zu conv=%p\n",
+          msgJson.size(), static_cast<void*>(conversation_.get()));
+
+  ::litert::lm::Message userMsg = nlohmann::ordered_json::parse(msgJson);
+  auto responseOr = conversation_->SendMessage(userMsg, ::litert::lm::OptionalArgs());
+  if (!responseOr.ok()) {
+    fprintf(stderr, "[FORK] sendMessage failed: %s\n",
+            responseOr.status().ToString().c_str());
+    throw std::runtime_error("LiteRT-LM: sendMessage failed: " +
+                             std::string(responseOr.status().ToString()));
   }
-  
-  const char* responseStr = litert_lm_json_response_get_string(response);
-  if (responseStr) {
-    result = extractTextFromResponse(std::string(responseStr));
-  }
-  litert_lm_json_response_delete(response);
-  
-  auto* benchInfo = litert_lm_conversation_get_benchmark_info(conversation_);
-  if (benchInfo) {
-    int numDecodeTurns = litert_lm_benchmark_info_get_num_decode_turns(benchInfo);
+  std::string raw = responseOr->dump();
+  fprintf(stderr, "[FORK] raw response (%zu bytes): %s\n",
+          raw.size(),
+          raw.size() > 500 ? (raw.substr(0, 500) + "...").c_str() : raw.c_str());
+  result = extractTextFromResponse(raw);
+
+  auto benchInfoOr = conversation_->GetBenchmarkInfo();
+  if (benchInfoOr.ok()) {
+    const auto& benchInfo = *benchInfoOr;
+    int numDecodeTurns = benchInfo.GetTotalDecodeTurns();
     if (numDecodeTurns > 0) {
       int lastIdx = numDecodeTurns - 1;
-      lastStats_.tokensPerSecond = litert_lm_benchmark_info_get_decode_tokens_per_sec_at(benchInfo, lastIdx);
-      lastStats_.completionTokens = static_cast<double>(
-        litert_lm_benchmark_info_get_decode_token_count_at(benchInfo, lastIdx));
+      lastStats_.tokensPerSecond = benchInfo.GetDecodeTokensPerSec(lastIdx);
+      auto turn = benchInfo.GetDecodeTurn(lastIdx);
+      if (turn.ok()) {
+        lastStats_.completionTokens = static_cast<double>(turn->num_tokens);
+      }
     }
-    lastStats_.timeToFirstToken = litert_lm_benchmark_info_get_time_to_first_token(benchInfo);
-    litert_lm_benchmark_info_delete(benchInfo);
+    lastStats_.timeToFirstToken = benchInfo.GetTimeToFirstToken();
   }
 #else
   // Non-Apple stub
@@ -496,96 +673,95 @@ std::string HybridLiteRTLM::sendMessageInternal(const std::string& message) {
 // sendMessageAsync — Streaming text inference
 // =============================================================================
 
-void HybridLiteRTLM::streamCallbackFn(void* callback_data, const char* chunk,
-                                        bool is_final, const char* error_msg) {
-  auto* ctx = static_cast<StreamContext*>(callback_data);
-  
-  if (error_msg) {
-    // Error occurred — notify JS and clean up
-    ctx->onToken(std::string("Error: ") + error_msg, true);
-    delete ctx;
-    return;
-  }
-  
-  if (is_final) {
-    // Calculate stats
-    auto endTime = std::chrono::steady_clock::now();
-    double durationMs = std::chrono::duration<double, std::milli>(endTime - ctx->startTime).count();
-    
-    if (ctx->lastStats && ctx->tokenCount > 0) {
-      ctx->lastStats->completionTokens = static_cast<double>(ctx->tokenCount);
-      ctx->lastStats->totalTime = durationMs / 1000.0;
-      ctx->lastStats->tokensPerSecond = (ctx->tokenCount / durationMs) * 1000.0;
-    }
-    
-    // Update history (thread-safe)
-    {
-      std::lock_guard<std::mutex> lock(*ctx->historyMutex);
-      ctx->history->push_back(Message{Role::USER, ctx->userMessage});
-      ctx->history->push_back(Message{Role::MODEL, ctx->fullResponse});
-    }
-    
-    ctx->onToken("", true);
-    delete ctx;
-    return;
-  }
-  
-  if (chunk) {
-    std::string token(chunk);
-    // Filter out Gemma control tokens from streamed chunks
-    std::string cleaned = stripControlTokens(token);
-    ctx->fullResponse += cleaned;
-    ctx->tokenCount++;
-    if (!cleaned.empty()) {
-      ctx->onToken(cleaned, false);
-    }
-  }
-}
+// streamCallbackFn (legacy C-pointer callback) is no longer used — the C++
+// SendMessageAsync takes an absl::AnyInvocable lambda directly. Kept declared
+// in HybridLiteRTLM.hpp as a no-op stub to preserve ABI in case Nitro
+// regenerates a header that references it; safe to remove later.
+void HybridLiteRTLM::streamCallbackFn(void*, const char*, bool, const char*) {}
 
 void HybridLiteRTLM::sendMessageAsync(
     const std::string& message,
     const std::function<void(const std::string&, bool)>& onToken) {
-  
-  // Copy values for the background thread (avoid use-after-free)
+
   auto onTokenCopy = onToken;
   auto messageCopy = message;
-  
-  // Capture shared state safely — use unique_ptr to prevent leaks
-  auto ctxOwner = std::make_unique<StreamContext>();
-  ctxOwner->onToken = std::move(onTokenCopy);
-  ctxOwner->fullResponse = "";
-  ctxOwner->history = &history_;
-  ctxOwner->historyMutex = &mutex_;
-  ctxOwner->userMessage = messageCopy;
-  ctxOwner->lastStats = &lastStats_;
-  ctxOwner->startTime = std::chrono::steady_clock::now();
-  ctxOwner->tokenCount = 0;
-  
+
 #ifdef __APPLE__
   ensureLoaded();
-  
+
   std::string msgJson = buildTextMessageJson(messageCopy);
-  
-  // Release ownership — the C callback now owns the context via raw pointer.
-  // streamCallbackFn will delete it when done or on error.
-  StreamContext* ctx = ctxOwner.release();
-  
-  // Wrap the initial engine call in runOnLargeStack for consistency
-  // with all other engine entry points (XNNPack needs >512KB stack).
+  ::litert::lm::Message userMsg = nlohmann::ordered_json::parse(msgJson);
+
+  // Shared state for the streaming callback. Captured by lambda copy.
+  struct StreamState {
+    std::function<void(const std::string&, bool)> onToken;
+    std::string fullResponse;
+    std::vector<Message>* history;
+    std::mutex* historyMutex;
+    std::string userMessage;
+    GenerationStats* lastStats;
+    std::chrono::steady_clock::time_point startTime;
+    int tokenCount;
+  };
+  auto state = std::make_shared<StreamState>();
+  state->onToken = std::move(onTokenCopy);
+  state->history = &history_;
+  state->historyMutex = &mutex_;
+  state->userMessage = messageCopy;
+  state->lastStats = &lastStats_;
+  state->startTime = std::chrono::steady_clock::now();
+  state->tokenCount = 0;
+
   runOnLargeStack([&]() {
-    int result = litert_lm_conversation_send_message_stream(
-      conversation_, msgJson.c_str(), nullptr,
-      streamCallbackFn, ctx);
-    
-    if (result != 0) {
-      delete ctx;
-      throw std::runtime_error("LiteRT-LM: Failed to start streaming inference");
+    auto status = conversation_->SendMessageAsync(
+      userMsg,
+      [state](absl::StatusOr<::litert::lm::Message> chunkOr) mutable {
+        if (!chunkOr.ok()) {
+          state->onToken(std::string("Error: ") +
+                         std::string(chunkOr.status().message()), true);
+          return;
+        }
+        const ::litert::lm::Message& chunkMsg = *chunkOr;
+        if (chunkMsg.empty()) {
+          // End-of-stream sentinel.
+          auto endTime = std::chrono::steady_clock::now();
+          double durationMs = std::chrono::duration<double, std::milli>(
+            endTime - state->startTime).count();
+          if (state->lastStats && state->tokenCount > 0) {
+            state->lastStats->completionTokens =
+              static_cast<double>(state->tokenCount);
+            state->lastStats->totalTime = durationMs / 1000.0;
+            state->lastStats->tokensPerSecond =
+              (state->tokenCount / durationMs) * 1000.0;
+          }
+          {
+            std::lock_guard<std::mutex> lock(*state->historyMutex);
+            state->history->push_back(Message{Role::USER, state->userMessage});
+            state->history->push_back(Message{Role::MODEL, state->fullResponse});
+          }
+          state->onToken("", true);
+          return;
+        }
+        // Extract text from the structured chunk Message JSON. The engine may
+        // return content as a string OR as an array of {type:"text",text:"..."}
+        // entries; both are handled by extractTextFromResponse.
+        std::string cleaned = extractTextFromResponse(chunkMsg.dump());
+        if (!cleaned.empty()) {
+          state->fullResponse += cleaned;
+          state->tokenCount++;
+          state->onToken(cleaned, false);
+        }
+      },
+      ::litert::lm::OptionalArgs());
+
+    if (!status.ok()) {
+      throw std::runtime_error("LiteRT-LM: Failed to start streaming: " +
+                               std::string(status.ToString()));
     }
   });
 #else
   // Non-Apple stub
-  ctxOwner->onToken("[iOS only] Streaming not available on this platform.", true);
-  // ctxOwner auto-deleted by unique_ptr
+  onTokenCopy("[iOS only] Streaming not available on this platform.", true);
 #endif
 }
 
@@ -616,28 +792,24 @@ std::string HybridLiteRTLM::sendMessageWithImageInternal(
   std::string result;
   
 #ifdef __APPLE__
-  // Verify image exists
   std::ifstream imageFile(imagePath);
   if (!imageFile.good()) {
     throw std::runtime_error("Image file not found: " + imagePath);
   }
   imageFile.close();
-  
-  // Build multimodal message JSON — the C API handles image preprocessing
+
   std::string msgJson = buildImageMessageJson(message, imagePath);
-  
-  auto* response = litert_lm_conversation_send_message(
-    conversation_, msgJson.c_str(), nullptr);
-  
-  if (!response) {
-    throw std::runtime_error("LiteRT-LM: sendMessageWithImage failed");
+  ::litert::lm::Message userMsg = nlohmann::ordered_json::parse(msgJson);
+  auto responseOr = conversation_->SendMessage(userMsg, ::litert::lm::OptionalArgs());
+  if (!responseOr.ok()) {
+    throw std::runtime_error("LiteRT-LM: sendMessageWithImage failed: " +
+                             std::string(responseOr.status().ToString()));
   }
-  
-  const char* responseStr = litert_lm_json_response_get_string(response);
-  if (responseStr) {
-    result = extractTextFromResponse(std::string(responseStr));
-  }
-  litert_lm_json_response_delete(response);
+  std::string raw = responseOr->dump();
+  fprintf(stderr, "[FORK] raw response (%zu bytes): %s\n",
+          raw.size(),
+          raw.size() > 500 ? (raw.substr(0, 500) + "...").c_str() : raw.c_str());
+  result = extractTextFromResponse(raw);
 #else
   result = "[iOS only] Vision inference not available on this platform.";
 #endif
@@ -683,21 +855,19 @@ std::string HybridLiteRTLM::sendMessageWithAudioInternal(
     throw std::runtime_error("Audio file not found: " + audioPath);
   }
   audioFile.close();
-  
+
   std::string msgJson = buildAudioMessageJson(message, audioPath);
-  
-  auto* response = litert_lm_conversation_send_message(
-    conversation_, msgJson.c_str(), nullptr);
-  
-  if (!response) {
-    throw std::runtime_error("LiteRT-LM: sendMessageWithAudio failed");
+  ::litert::lm::Message userMsg = nlohmann::ordered_json::parse(msgJson);
+  auto responseOr = conversation_->SendMessage(userMsg, ::litert::lm::OptionalArgs());
+  if (!responseOr.ok()) {
+    throw std::runtime_error("LiteRT-LM: sendMessageWithAudio failed: " +
+                             std::string(responseOr.status().ToString()));
   }
-  
-  const char* responseStr = litert_lm_json_response_get_string(response);
-  if (responseStr) {
-    result = extractTextFromResponse(std::string(responseStr));
-  }
-  litert_lm_json_response_delete(response);
+  std::string raw = responseOr->dump();
+  fprintf(stderr, "[FORK] raw response (%zu bytes): %s\n",
+          raw.size(),
+          raw.size() > 500 ? (raw.substr(0, 500) + "...").c_str() : raw.c_str());
+  result = extractTextFromResponse(raw);
 #else
   result = "[iOS only] Audio inference not available on this platform.";
 #endif
@@ -847,22 +1017,12 @@ void HybridLiteRTLM::close() {
   history_.clear();
   
 #ifdef __APPLE__
-  if (conversation_) {
-    litert_lm_conversation_delete(conversation_);
-    conversation_ = nullptr;
-  }
-  if (conv_config_) {
-    litert_lm_conversation_config_delete(conv_config_);
-    conv_config_ = nullptr;
-  }
-  if (session_config_) {
-    litert_lm_session_config_delete(session_config_);
-    session_config_ = nullptr;
-  }
-  if (engine_) {
-    litert_lm_engine_delete(engine_);
-    engine_ = nullptr;
-  }
+  // unique_ptrs handle native cleanup. Order: conversation first so it stops
+  // referencing the engine, then engine. session_config_ is a value member —
+  // reassigning to a fresh default releases any held state.
+  conversation_.reset();
+  engine_.reset();
+  session_config_ = ::litert::lm::SessionConfig::CreateDefault();
 #endif
   
   lastStats_ = GenerationStats{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};

@@ -14,9 +14,17 @@
 
 #include "../nitrogen/generated/shared/c++/HybridLiteRTLMSpec.hpp"
 
-// LiteRT-LM C API (iOS uses prebuilt framework with C ABI)
+// iOS: LiteRT-LM C++ API (direct calls into runtime classes).
+// We previously used the C API (cpp/include/litert_lm_engine.h) — replaced
+// by C++ direct calls so we get access to channels, overwrite_prompt_template
+// and structured tool_calls in responses.
 #ifdef __APPLE__
-#include "include/litert_lm_engine.h"
+#include "runtime/conversation/conversation.h"
+#include "runtime/conversation/io_types.h"
+#include "runtime/engine/engine.h"
+#include "runtime/engine/engine_factory.h"
+#include "runtime/engine/engine_settings.h"
+#include "runtime/engine/io_types.h"
 #endif
 
 // Memory usage headers
@@ -29,6 +37,7 @@
 #include <fstream>
 #endif
 
+#include <chrono>
 #include <string>
 #include <optional>
 #include <vector>
@@ -97,12 +106,14 @@ public:
   void close() override;
 
 private:
-  // LiteRT-LM C API resources (iOS only)
+  // LiteRT-LM C++ API resources (iOS only).
+  // Engine, Conversation own native state; SessionConfig is a value held by
+  // the conversation builder (kept around for hot-swap re-creation).
 #ifdef __APPLE__
-  LiteRtLmEngine* engine_ = nullptr;
-  LiteRtLmConversation* conversation_ = nullptr;
-  LiteRtLmConversationConfig* conv_config_ = nullptr;
-  LiteRtLmSessionConfig* session_config_ = nullptr;
+  std::unique_ptr<::litert::lm::Engine> engine_;
+  std::unique_ptr<::litert::lm::Conversation> conversation_;
+  ::litert::lm::SessionConfig session_config_ =
+      ::litert::lm::SessionConfig::CreateDefault();
 #endif
   
   // State
@@ -126,15 +137,38 @@ private:
   // toolsJson_ is non-empty, false otherwise.
   bool enableConstrainedDecoding_ = false;
 
-  // Configuration - sampling parameters
-  double temperature_ = 0.7;
-  double topK_ = 40.0;
-  double topP_ = 0.95;
-  double maxTokens_ = 1024.0;
+  // Pre-conversation messages JSON (few-shot history). Empty = none.
+  // Passed as the messages_json parameter to litert_lm_conversation_config_create
+  // so the model sees prior turns as established context. Used to seed an
+  // example tool-call exchange that primes the model away from RLHF refusal
+  // patterns on real-time/factual queries.
+  std::string priorMessagesJson_;
 
-  // Total engine token budget (input + output). Set from LLMConfig.contextWindow,
-  // not exposed in JS yet — kept patched at 16384 to fit long tool-laden prompts.
-  size_t contextWindow_ = 16384;
+  // Extra context JSON for prompt template rendering (JsonPreface.extra_context).
+  // Variables substituted into the Jinja chat template by the engine.
+  std::string extraContextJson_;
+
+  // When true, channel content (e.g. <thinking> output for Gemma 3+) is filtered
+  // out of the KV cache between turns to prevent reasoning text accumulating.
+  // Default false to match Edge Gallery's Android upstream (does not enable
+  // this in ConversationConfig). Empirically aggressive filtering can clip
+  // legitimate user-text tokens on the same turn boundary.
+  bool filterChannelContent_ = false;
+
+  // Configuration - sampling parameters. Mirrors Edge Gallery upstream
+  // `model_allowlists/1_0_13.json` `defaultConfig` for Gemma-4-E2B/E4B-it
+  // under the `llm_agent_chat` task. Tuned for real devices (Android/iOS).
+  // On the iOS simulator these defaults are ~3x slower than smaller values
+  // because sim runs on CPU fallback (TFLite Metal compute fails on sim,
+  // see `[FORK] backend_resolved=CPU`). Caller may override via LLMConfig.
+  double temperature_ = 1.0;
+  double topK_ = 64.0;
+  double topP_ = 0.95;
+  double maxTokens_ = 4000.0;
+
+  // Total engine token budget (input + output). Mirrors upstream
+  // `maxContextLength: 32000`.
+  size_t contextWindow_ = 32000;
 
   // Helper to ensure model is loaded
   void ensureLoaded() const {

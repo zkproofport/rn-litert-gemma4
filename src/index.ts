@@ -147,24 +147,129 @@ export interface Gemma4ToolCall {
 const GEMMA4_TOOL_CALL_RE =
   /<\|tool_call>\s*call:\s*([A-Za-z][\w-]*)\s*(\{[\s\S]*?\})\s*<tool_call\|>/;
 
+// Fallback: Gemma 4 (without constrained decoding) often emits a ```json
+// fenced code block instead of native <|tool_call|> tokens. Detect both
+// `{ "tool_name": "X", "parameters": {...} }` and `{ "name": "X",
+// "arguments": {...} }` (OpenAI-style) shapes.
+//
+// NOTE: Implemented with indexOf+slice instead of a regex because Hermes JS
+// engine (default React Native runtime) compiles regex literals to bytecode
+// that misbehaves on multi-line dotall captures with backtick fences.
+function extractJsonFenceBody(text: string): string | null {
+  const start = text.indexOf('```');
+  if (start < 0) return null;
+  const end = text.indexOf('```', start + 3);
+  if (end <= start) return null;
+  const inner = text.slice(start + 3, end);
+  const braceStart = inner.indexOf('{');
+  const braceEnd = inner.lastIndexOf('}');
+  if (braceStart < 0 || braceEnd <= braceStart) return null;
+  return inner.slice(braceStart, braceEnd + 1);
+}
+
+/**
+ * Strip Gemma 4 / FunctionGemma string-quoting tokenizer artifacts.
+ *
+ * The model wraps literal-string arguments with `<|"|>...<|"|>` markers when
+ * emitting tool calls. The engine's chat-template decoder normally consumes
+ * these, but they leak through when constrained decoding is OFF or the
+ * structured tool_calls pathway is taken. We strip them here so callers see
+ * clean values.
+ */
+function stripStringArtifacts(value: unknown): unknown {
+  if (typeof value === 'string') {
+    let v = value;
+    // Repeatedly strip <|"|>...<|"|> wrapping.
+    let prev: string;
+    do {
+      prev = v;
+      v = v.replace(/^<\|"\|>/, '').replace(/<\|"\|>$/, '');
+    } while (v !== prev);
+    return v.trim();
+  }
+  if (Array.isArray(value)) return value.map(stripStringArtifacts);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = stripStringArtifacts(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 /**
  * Extract a single tool call from a Gemma 4 model response.
  * Returns null if no tool call was emitted.
+ *
+ * Recognizes three output formats:
+ *   1. Structured: `{"role":"assistant","tool_calls":[{"type":"function","function":{"name":"X","arguments":{...}}}]}`
+ *      — emitted by the runtime's `Conversation::SendMessage` pipeline once
+ *      the engine has parsed native tool tokens. This is the primary path
+ *      with the C++-direct iOS wrapper.
+ *   2. Native (legacy): `<|tool_call>call:NAME{...}<tool_call|>`
+ *   3. JSON fence (legacy): ` ```json\n{ "tool_name": "X", "parameters": {...} }\n``` `
  */
 export function parseGemma4ToolCall(text: string): Gemma4ToolCall | null {
-  const match = GEMMA4_TOOL_CALL_RE.exec(text);
-  if (!match) return null;
-  const name = match[1];
-  const body = match[2];
-  if (!name || !body) return null;
-  let args: Record<string, unknown> = {};
-  try {
-    // Gemma 4's tool call body is JSON-shaped (with constrained decoding).
-    args = JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    // Fallback: leave arguments empty rather than throwing.
+  // 1. Structured Message JSON from the runtime's tool_calls pipeline.
+  // Detect heuristically — full JSON parse can fail on partial/oddly-quoted
+  // chunks; require the literal field marker.
+  if (text.includes('"tool_calls"')) {
+    try {
+      const obj = JSON.parse(text) as Record<string, unknown>;
+      const calls = obj.tool_calls as
+        | Array<{ function?: { name?: string; arguments?: unknown } }>
+        | undefined;
+      const first = calls && calls[0];
+      const fn = first && first.function;
+      if (fn && typeof fn.name === 'string' && fn.name.length > 0) {
+        const argsClean = stripStringArtifacts(fn.arguments ?? {}) as Record<
+          string,
+          unknown
+        >;
+        return { name: fn.name, arguments: argsClean, raw: text };
+      }
+    } catch {}
   }
-  return { name, arguments: args, raw: match[0] };
+
+  const native = GEMMA4_TOOL_CALL_RE.exec(text);
+  if (native) {
+    const name = native[1];
+    const body = native[2];
+    if (name && body) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(body) as Record<string, unknown>;
+      } catch {}
+      return {
+        name,
+        arguments: stripStringArtifacts(args) as Record<string, unknown>,
+        raw: native[0],
+      };
+    }
+  }
+
+  const body = extractJsonFenceBody(text);
+  if (body) {
+    try {
+      const obj = JSON.parse(body) as Record<string, unknown>;
+      const name =
+        (obj.tool_name as string | undefined) ?? (obj.name as string | undefined);
+      const argsObj =
+        (obj.parameters as Record<string, unknown> | undefined) ??
+        (obj.arguments as Record<string, unknown> | undefined) ??
+        {};
+      if (typeof name === 'string' && name.length > 0) {
+        return {
+          name,
+          arguments: stripStringArtifacts(argsObj) as Record<string, unknown>,
+          raw: body,
+        };
+      }
+    } catch {}
+  }
+
+  return null;
 }
 
 /**
